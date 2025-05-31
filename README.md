@@ -1,4 +1,4 @@
-# ComfyUI-FramePackWrapper_Plus
+# ComfyUI-FramePackWrapper_PlusOne
 
 An improved wrapper for the FramePack project that allows the creation of videos of any length based on reference images and LoRAs with F1 sampler.
 
