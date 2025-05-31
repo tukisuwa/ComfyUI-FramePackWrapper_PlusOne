@@ -1,0 +1,6 @@
+accelerate>=1.6.0
+diffusers>=0.33.1
+transformers>=4.46.2
+einops
+safetensors
+peft
