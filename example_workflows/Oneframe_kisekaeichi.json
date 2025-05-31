@@ -1074,56 +1074,6 @@
       ]
     },
     {
-      "id": 113,
-      "type": "FramePackFindNearestBucket",
-      "pos": [
-        300.54437255859375,
-        557.086669921875
-      ],
-      "size": [
-        315,
-        78
-      ],
-      "flags": {},
-      "order": 17,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 248
-        }
-      ],
-      "outputs": [
-        {
-          "name": "width",
-          "type": "INT",
-          "links": [
-            251,
-            256
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "height",
-          "type": "INT",
-          "links": [
-            252,
-            257
-          ],
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "aux_id": "ShmuelRonen/ComfyUI-FramePackWrapper_Plus",
-        "ver": "93e60c83ffc73c249339955f8684d86487484c27",
-        "Node name for S&R": "FramePackFindNearestBucket"
-      },
-      "widgets_values": [
-        1200
-      ]
-    },
-    {
       "id": 77,
       "type": "LoadImage",
       "pos": [
@@ -1206,6 +1156,108 @@
       "widgets_values": [
         "73.png",
         "image"
+      ]
+    },
+    {
+      "id": 52,
+      "type": "LoadFramePackModel",
+      "pos": [
+        1608.3046875,
+        -312.9743347167969
+      ],
+      "size": [
+        480.7601013183594,
+        174
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "type": "FRAMEPACKCOMPILEARGS",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "lora",
+          "type": "FPLORA",
+          "shape": 7,
+          "link": 159
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "FramePackMODEL",
+          "links": [
+            236
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "aux_id": "kijai/ComfyUI-FramePackWrapper",
+        "ver": "49fe507eca8246cc9d08a8093892f40c1180e88f",
+        "Node name for S&R": "LoadFramePackModel",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "FramePackI2V_HY_fp8_e4m3fn.safetensors",
+        "bf16",
+        "fp8_e4m3fn",
+        "offload_device",
+        "sdpa"
+      ]
+    },
+    {
+      "id": 113,
+      "type": "FramePackFindNearestBucket",
+      "pos": [
+        300.54437255859375,
+        557.086669921875
+      ],
+      "size": [
+        315,
+        78
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 248
+        }
+      ],
+      "outputs": [
+        {
+          "name": "width",
+          "type": "INT",
+          "links": [
+            251,
+            256
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": [
+            252,
+            257
+          ],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "aux_id": "ShmuelRonen/ComfyUI-FramePackWrapper_Plus",
+        "ver": "93e60c83ffc73c249339955f8684d86487484c27",
+        "Node name for S&R": "FramePackFindNearestBucket"
+      },
+      "widgets_values": [
+        640
       ]
     },
     {
@@ -1296,7 +1348,7 @@
         "Node name for S&R": "FramePackSingleFrameSampler"
       },
       "widgets_values": [
-        15,
+        10,
         true,
         0.15,
         1,
@@ -1311,58 +1363,6 @@
         1,
         5,
         10
-      ]
-    },
-    {
-      "id": 52,
-      "type": "LoadFramePackModel",
-      "pos": [
-        1608.3046875,
-        -312.9743347167969
-      ],
-      "size": [
-        480.7601013183594,
-        174
-      ],
-      "flags": {},
-      "order": 16,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "compile_args",
-          "type": "FRAMEPACKCOMPILEARGS",
-          "shape": 7,
-          "link": null
-        },
-        {
-          "name": "lora",
-          "type": "FPLORA",
-          "shape": 7,
-          "link": 159
-        }
-      ],
-      "outputs": [
-        {
-          "name": "model",
-          "type": "FramePackMODEL",
-          "links": [
-            236
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "aux_id": "kijai/ComfyUI-FramePackWrapper",
-        "ver": "49fe507eca8246cc9d08a8093892f40c1180e88f",
-        "Node name for S&R": "LoadFramePackModel",
-        "widget_ue_connectable": {}
-      },
-      "widgets_values": [
-        "FramePackI2V_HY_fp8_e4m3fn.safetensors",
-        "bf16",
-        "fp8_e4m3fn",
-        "offload_device",
-        "sdpa"
       ]
     }
   ],
@@ -1652,10 +1652,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.8954302432553363,
+      "scale": 0.2593742460100434,
       "offset": [
-        -545.1553099575087,
-        562.0135299105382
+        752.8240785905814,
+        -5.459027906215738
       ]
     },
     "frontendVersion": "1.18.6",
