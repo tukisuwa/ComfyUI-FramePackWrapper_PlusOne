@@ -1121,14 +1121,12 @@ class FramePackSingleFrameSampler:
                     except Exception as e:
                         print(f"参照マスク適用エラー: {e}")
                 
-                # clean_latentsを結合（一つ目のコードと同じ）
+                # clean_latentsを結合
                 clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
                 
                 # clean_latent_indicesを結合
                 clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
                 
-                # *** 重要: Kisekaeichi時は2x/4xインデックスを無効化 ***
-                # 一つ目のコードから：公式実装のno_2x, no_4x処理を実装
                 clean_latents_2x_param = None
                 clean_latents_4x_param = None
                 clean_latent_2x_indices = None
@@ -1163,7 +1161,7 @@ class FramePackSingleFrameSampler:
                 print(f"  - 2x/4x無効化: True")
                 
             else:
-                # 通常モード（参照画像なし）- 一つ目のコードと同じ
+                # 通常モード（参照画像なし）
                 all_indices = torch.arange(0, latent_window_size).unsqueeze(0)
                 latent_indices = all_indices[:, -1:]
                 
@@ -1175,22 +1173,20 @@ class FramePackSingleFrameSampler:
                 clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
                 clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
                 
-                # 通常モードでのインデックス調整（一つ目のコードと同じ）
+                # 通常モードでのインデックス調整
                 clean_latent_indices = torch.tensor([[0]], dtype=clean_latent_indices.dtype, device=clean_latent_indices.device)
                 clean_latents = clean_latents[:, :, :1, :, :]
                 
-                # 通常モード時の2x/4x処理（一つ目のコードと同じ）
-                clean_latents_2x = torch.zeros(1, 16, 2, H, W, dtype=clean_latents.dtype)
-                clean_latents_4x = torch.zeros(1, 16, 16, H, W, dtype=clean_latents.dtype)
+                clean_latents_2x_param = None
+                clean_latents_4x_param = None
+                clean_latent_2x_indices = None
+                clean_latent_4x_indices = None
                 
-                # clean_latents_2xとclean_latents_4xも調整（一つ目のコードより）
-                if clean_latent_2x_indices.shape[1] > 0:
-                    # clean_latents_2xの最初の要素のみを使用
-                    clean_latent_2x_indices = clean_latent_2x_indices[:, :1]
+                # 2x, 4x latentsの設定も無効化
+                clean_latents_2x = None
+                clean_latents_4x = None
                 
-                if clean_latent_4x_indices.shape[1] > 0:
-                    # clean_latents_4xの最初の要素のみを使用
-                    clean_latent_4x_indices = clean_latent_4x_indices[:, :1]
+                print("Kisekaeichi: 2x/4xインデックスを無効化しました")
                 
                 image_encoder_last_hidden_state = start_image_encoder_last_hidden_state
                 
