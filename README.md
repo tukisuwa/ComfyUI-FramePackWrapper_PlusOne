@@ -17,7 +17,7 @@ An improved wrapper for the FramePack project that allows the creation of videos
 1. Clone this repository into your ComfyUI custom_nodes folder:
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/ShmuelRonen/ComfyUI-FramePackWrapper_Plus
+git clone https://github.com/tori29umai0123/ComfyUI-FramePackWrapper_PlusOne.git
 ```
 
 2. Install the required dependencies:
