@@ -501,47 +501,6 @@
       "bgcolor": "#533"
     },
     {
-      "id": 76,
-      "type": "LoadImage",
-      "pos": [
-        640.0242919921875,
-        907.6810302734375
-      ],
-      "size": [
-        620.363525390625,
-        689.5709838867188
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            255
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.29",
-        "Node name for S&R": "LoadImage",
-        "widget_ue_connectable": {}
-      },
-      "widgets_values": [
-        "73.png",
-        "image"
-      ]
-    },
-    {
       "id": 17,
       "type": "CLIPVisionEncode",
       "pos": [
@@ -692,7 +651,7 @@
       "flags": {
         "collapsed": false
       },
-      "order": 10,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
@@ -763,7 +722,7 @@
         202
       ],
       "flags": {},
-      "order": 11,
+      "order": 10,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -832,48 +791,6 @@
       ],
       "color": "#232",
       "bgcolor": "#353"
-    },
-    {
-      "id": 77,
-      "type": "LoadImage",
-      "pos": [
-        13.365955352783203,
-        829.3644409179688
-      ],
-      "size": [
-        615.048828125,
-        680.713134765625
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            248,
-            250
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.29",
-        "Node name for S&R": "LoadImage",
-        "widget_ue_connectable": {}
-      },
-      "widgets_values": [
-        "68.png",
-        "image"
-      ]
     },
     {
       "id": 114,
@@ -1207,55 +1124,88 @@
       ]
     },
     {
-      "id": 52,
-      "type": "LoadFramePackModel",
+      "id": 77,
+      "type": "LoadImage",
       "pos": [
-        1608.3046875,
-        -312.9743347167969
+        13.365955352783203,
+        829.3644409179688
       ],
       "size": [
-        480.7601013183594,
-        174
+        615.048828125,
+        680.713134765625
       ],
       "flags": {},
-      "order": 16,
+      "order": 11,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "compile_args",
-          "type": "FRAMEPACKCOMPILEARGS",
-          "shape": 7,
-          "link": null
-        },
-        {
-          "name": "lora",
-          "type": "FPLORA",
-          "shape": 7,
-          "link": 159
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "model",
-          "type": "FramePackMODEL",
+          "name": "IMAGE",
+          "type": "IMAGE",
           "links": [
-            236
+            248,
+            250
           ],
           "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
         }
       ],
+      "title": "PoseImage",
       "properties": {
-        "aux_id": "kijai/ComfyUI-FramePackWrapper",
-        "ver": "49fe507eca8246cc9d08a8093892f40c1180e88f",
-        "Node name for S&R": "LoadFramePackModel",
+        "cnr_id": "comfy-core",
+        "ver": "0.3.29",
+        "Node name for S&R": "LoadImage",
         "widget_ue_connectable": {}
       },
       "widgets_values": [
-        "FramePackI2V_HY_fp8_e4m3fn.safetensors",
-        "bf16",
-        "fp8_e4m3fn",
-        "offload_device",
-        "sdpa"
+        "68.png",
+        "image"
+      ]
+    },
+    {
+      "id": 76,
+      "type": "LoadImage",
+      "pos": [
+        640.0242919921875,
+        907.6810302734375
+      ],
+      "size": [
+        620.363525390625,
+        689.5709838867188
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            255
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "title": "CharacterImage",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.29",
+        "Node name for S&R": "LoadImage",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "73.png",
+        "image"
       ]
     },
     {
@@ -1361,6 +1311,58 @@
         1,
         5,
         10
+      ]
+    },
+    {
+      "id": 52,
+      "type": "LoadFramePackModel",
+      "pos": [
+        1608.3046875,
+        -312.9743347167969
+      ],
+      "size": [
+        480.7601013183594,
+        174
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "compile_args",
+          "type": "FRAMEPACKCOMPILEARGS",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "lora",
+          "type": "FPLORA",
+          "shape": 7,
+          "link": 159
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "FramePackMODEL",
+          "links": [
+            236
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "aux_id": "kijai/ComfyUI-FramePackWrapper",
+        "ver": "49fe507eca8246cc9d08a8093892f40c1180e88f",
+        "Node name for S&R": "LoadFramePackModel",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "FramePackI2V_HY_fp8_e4m3fn.safetensors",
+        "bf16",
+        "fp8_e4m3fn",
+        "offload_device",
+        "sdpa"
       ]
     }
   ],
@@ -1650,10 +1652,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 1.3109994191501344,
+      "scale": 0.8954302432553363,
       "offset": [
-        -1562.725117595299,
-        -957.323874831827
+        -545.1553099575087,
+        562.0135299105382
       ]
     },
     "frontendVersion": "1.18.6",
