@@ -803,7 +803,7 @@ class LoadFramePackModelExperimental:
     def loadmodel(self, model, base_precision, quantization,
                   compile_args=None, attention_mode="sdpa", lora=None, load_device="main_device"):
         
-                if lora is not None:
+        if lora is not None:
             print("LoRA detected. Unloading any pre-loaded models to ensure memory-efficient merge.")
             mm.unload_all_models()
             mm.soft_empty_cache()
