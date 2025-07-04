@@ -59,10 +59,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
             print("Falling back to custom conversion")
             
             # If standard conversion fails, use the custom implementation
-            # [Insert the custom conversion code here that was previously unreachable]
-            # Include all the remapper functions and conversion logic
-            
-            # Return the result of the custom conversion
             return converted_state_dict
             
     except Exception as e:
@@ -110,7 +106,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     state_dict[key.replace("img_attn_qkv", "attn.to_v")] = to_v
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}. Skipping.")
-                # Just skip the problematic key
 
         def remap_txt_attn_qkv_(key, state_dict):
             try:
@@ -147,7 +142,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     state_dict[key.replace("txt_attn_qkv", "attn.add_v_proj")] = to_v
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}. Skipping.")
-                # Just skip the problematic key
 
         def remap_txt_in_(key, state_dict):
             def rename_key(key):
@@ -176,7 +170,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     state_dict[rename_key(key)] = state_dict.pop(key)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
                 if key in state_dict:
                     state_dict.pop(key)
 
@@ -244,7 +237,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     state_dict[new_key] = state_dict.pop(key)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
                 if key in state_dict:
                     state_dict.pop(key)
 
@@ -300,7 +292,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     converted_state_dict[key[len("diffusion_model.") :]] = converted_state_dict.pop(key)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
 
         # Rename and remap the state dict keys
         for key in list(converted_state_dict.keys()):
@@ -311,7 +302,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                 converted_state_dict[new_key] = converted_state_dict.pop(key)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
 
         for key in list(converted_state_dict.keys()):
             try:
@@ -321,7 +311,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     handler_fn_inplace(key, converted_state_dict)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
 
         # Add back the "transformer." prefix
         for key in list(converted_state_dict.keys()):
@@ -329,7 +318,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                 converted_state_dict[f"transformer.{key}"] = converted_state_dict.pop(key)
             except Exception as e:
                 logger.warning(f"Error processing key {key}: {str(e)}")
-                # Skip if we can't process this key properly
 
         return converted_state_dict
     except Exception as e:
@@ -396,7 +384,6 @@ class FramePackTorchCompileSettings:
 
         return (compile_args, )
 
-#region Model loading
 class DownloadAndLoadFramePackModel:
     @classmethod
     def INPUT_TYPES(s):
@@ -460,8 +447,6 @@ class DownloadAndLoadFramePackModel:
             if compile_args["compile_double_blocks"]:
                 for i, block in enumerate(transformer.transformer_blocks):
                     transformer.transformer_blocks[i] = torch.compile(block, fullgraph=compile_args["fullgraph"], dynamic=compile_args["dynamic"], backend=compile_args["backend"], mode=compile_args["mode"])
-
-            #transformer = torch.compile(transformer, fullgraph=compile_args["fullgraph"], dynamic=compile_args["dynamic"], backend=compile_args["backend"], mode=compile_args["mode"])
 
         pipe = {
             "transformer": transformer.eval(),
@@ -583,10 +568,9 @@ class LoadFramePackModel:
 
                 if not "transformer.single_transformer_blocks.0.attn.to_k.lora_A.weight" in lora_sd:
                     log.info(f"Converting LoRA weights from {l['path']} to diffusers format...")
-                    # Make a copy of the original state dict to avoid modifying it
                     state_dict_copy = {}
                     
-                    # Remove scalar (0-dimensional) tensors that cause problems
+                    # Remove scalar (0-dimensional) tensors
                     for key, value in lora_sd.items():
                         if isinstance(value, torch.Tensor):
                             if value.dim() == 0:
@@ -598,7 +582,6 @@ class LoadFramePackModel:
                     
                     print(f"After filtering: {len(state_dict_copy)} valid keys")
                     
-                    # Try the original conversion with the filtered state dict
                     try:
                         from diffusers.loaders.lora_conversion_utils import _convert_hunyuan_video_lora_to_diffusers
                         lora_sd = _convert_hunyuan_video_lora_to_diffusers(state_dict_copy)
@@ -637,7 +620,7 @@ class LoadFramePackModel:
             if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_e5m2":
                 params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
                 for name, param in transformer.named_parameters():
-                    # Make sure to not cast the LoRA weights to fp8.
+                    # Do not cast LoRA weights to fp8
                     if not any(keyword in name for keyword in params_to_keep) and not 'lora' in name:
                         param.data = param.data.to(after_lora_dtype)
 
@@ -684,7 +667,7 @@ class FramePackFindNearestBucket:
 
         return (new_width, new_height, )
 
-# 元のFramePackSamplerを保持（動画生成用）
+# For video generation
 class FramePackSampler:
     @classmethod
     def INPUT_TYPES(s):
@@ -799,10 +782,7 @@ class FramePackSampler:
         move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
 
         if total_latent_sections > 4:
-            # In theory the latent_paddings should follow the above sequence, but it seems that duplicating some
-            # items looks better than expanding it when total_latent_sections > 4
-            # One can try to remove below trick and just
-            # use `latent_paddings = list(reversed(range(total_latent_sections)))` to compare
+            # Duplicating some padding items seems to produce better results when total_latent_sections > 4
             latent_paddings = [3] + [2] * (total_latent_sections - 3) + [1, 0]
             latent_paddings_list = latent_paddings.copy()
 
@@ -816,9 +796,9 @@ class FramePackSampler:
                 if embed_interpolation != "disabled":
                     if embed_interpolation == "linear":
                         if total_latent_sections <= 1:
-                            frac = 1.0  # Handle case with only one section
+                            frac = 1.0
                         else:
-                            frac = 1 - i / (total_latent_sections - 1)  # going backwards
+                            frac = 1 - i / (total_latent_sections - 1)
                     else:
                         frac = start_embed_strength if has_end_image else 1.0
 
@@ -830,7 +810,7 @@ class FramePackSampler:
 
             print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}, is_first_section = {is_first_section}')
 
-            start_latent_frames = T  # 0 or 1
+            start_latent_frames = T
             indices = torch.arange(0, sum([start_latent_frames, latent_padding_size, latent_window_size, 1, 2, 16])).unsqueeze(0)
             clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split([start_latent_frames, latent_padding_size, latent_window_size, 1, 2, 16], dim=1)
             clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
@@ -844,20 +824,17 @@ class FramePackSampler:
                 clean_latents_post = end_latent.to(history_latents)
                 clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
 
-            #vid2vid WIP
+            # vid2vid
             if initial_samples is not None:
                 total_length = initial_samples.shape[2]
-
-                # Get the max padding value for normalization
                 max_padding = max(latent_paddings_list)
 
                 if is_last_section:
-                    # Last section should capture the end of the sequence
+                    # Last section captures the end of the sequence
                     start_idx = max(0, total_length - latent_window_size)
                 else:
-                    # Calculate windows that distribute more evenly across the sequence
-                    # This normalizes the padding values to create appropriate spacing
-                    if max_padding > 0:  # Avoid division by zero
+                    # Distribute windows evenly across the sequence
+                    if max_padding > 0:
                         progress = (max_padding - latent_padding) / max_padding
                         start_idx = int(progress * max(0, total_length - latent_window_size))
                     else:
@@ -974,23 +951,20 @@ class FramePackSingleFrameSampler:
                 # Advanced One-Frame Mode parameters
                 advanced_one_frame_mode=False, one_frame_mode_str=""):
 
-        print("=== 1フレーム推論モード ===")
+        print("=== Single Frame Inference Mode ===")
         transformer = model["transformer"]
         base_dtype = model["dtype"]
 
-        # Reset cache flags before setting new values
         if hasattr(transformer, 'enable_teacache'):
             transformer.enable_teacache = False
         if hasattr(transformer, 'enable_magcache'):
             transformer.enable_magcache = False
 
-        # RoPE Scaling: Set parameters on the model
         if hasattr(transformer, 'rope_scaling_factor'):
             transformer.rope_scaling_factor = rope_scaling_factor
         if hasattr(transformer, 'rope_scaling_timestep_threshold'):
             transformer.rope_scaling_timestep_threshold = rope_scaling_timestep_threshold if rope_scaling_timestep_threshold <= 1000 else None
 
-        # MagCache: Initialize
         if enable_magcache:
             mag_ratios = None
             if magcache_mag_ratios_str and not magcache_calibration:
@@ -1021,19 +995,17 @@ class FramePackSingleFrameSampler:
         mm.cleanup_models()
         mm.soft_empty_cache()
 
-        # Latent処理
         if start_latent is not None:
             start_latent = start_latent["samples"] * vae_scaling_factor
         if initial_samples is not None:
             initial_samples = initial_samples["samples"] * vae_scaling_factor
         if use_kisekaeichi and reference_latent is not None:
             reference_latent = reference_latent["samples"] * vae_scaling_factor
-            print(f"参照画像latent: {reference_latent.shape}")
+            print(f"Reference image latent: {reference_latent.shape}")
         
         print("start_latent", start_latent.shape)
         B, C, T, H, W = start_latent.shape
 
-        # 画像エンベッディング処理
         if image_embeds is not None:
             start_image_encoder_last_hidden_state = image_embeds["last_hidden_state"].to(device, base_dtype)
         else:
@@ -1041,11 +1013,10 @@ class FramePackSingleFrameSampler:
 
         if use_kisekaeichi and reference_image_embeds is not None:
             reference_image_encoder_last_hidden_state = reference_image_embeds["last_hidden_state"].to(device, base_dtype)
-            print("参照画像のCLIP embeddingを設定しました")
+            print("Reference image CLIP embedding set")
         else:
             reference_image_encoder_last_hidden_state = None
 
-        # テキストエンベッディング処理
         llama_vec = positive[0][0].to(device, base_dtype)
         clip_l_pooler = positive[0][1]["pooled_output"].to(device, base_dtype)
 
@@ -1059,18 +1030,12 @@ class FramePackSingleFrameSampler:
         llama_vec, llama_attention_mask = crop_or_pad_yield_mask(llama_vec, length=512)
         llama_vec_n, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
 
-        # シード設定
         rnd = torch.Generator("cpu").manual_seed(seed)
-        
-        # 1フレームモード固定設定
         sample_num_frames = 1
         
-        # --- One-Frame Inference Mode Logic ---
-        # Initialize with default values, which can be overridden.
         image_encoder_last_hidden_state = start_image_encoder_last_hidden_state
         
-        # This setup is for a basic single-frame generation if no special modes are used.
-        # It passes the start_latent as a "clean latent" at index 0.
+        # Basic single-frame generation setup
         clean_latents = start_latent
         clean_latent_indices = torch.tensor([[0]], dtype=torch.long)
         latent_indices = torch.tensor([[latent_window_size - 1]], dtype=torch.long)
@@ -1079,7 +1044,7 @@ class FramePackSingleFrameSampler:
         clean_latents_4x = None
         clean_latent_4x_indices = None
 
-        # Kisekaeichi mode is now a preset for the advanced mode
+        # Kisekaeichi mode is a preset for advanced mode
         if use_kisekaeichi and not advanced_one_frame_mode:
             print("--- Kisekaeichi Mode (Standard) ---")
             advanced_one_frame_mode = True
@@ -1092,14 +1057,12 @@ class FramePackSingleFrameSampler:
             
             control_latents_list = []
             
-            # Start with input latent
             masked_start_latent = start_latent
             if input_mask is not None:
                 mask_resized = common_upscale(input_mask.unsqueeze(0).unsqueeze(0), W, H, "bilinear", "center").squeeze(0).squeeze(0)
                 masked_start_latent = start_latent * mask_resized.to(start_latent.device)[None, None, None, :, :]
             control_latents_list.append(masked_start_latent)
 
-            # Add reference latent if available
             if reference_latent is not None:
                 masked_ref_latent = reference_latent
                 if reference_mask is not None:
@@ -1109,11 +1072,9 @@ class FramePackSingleFrameSampler:
 
             clean_latents = torch.cat(control_latents_list, dim=2)
 
-            # Default indices
             latent_indices = torch.tensor([[latent_window_size - 1]], dtype=torch.long)
             clean_latent_indices = torch.arange(clean_latents.shape[2], dtype=torch.long).unsqueeze(0)
 
-            # Parse string commands for index overrides
             for cmd in commands:
                 if cmd.startswith("target_index="):
                     latent_indices[0, 0] = int(cmd.split('=')[1])
@@ -1121,7 +1082,6 @@ class FramePackSingleFrameSampler:
                     indices_str = cmd.split('=')[1].split(';')
                     clean_latent_indices = torch.tensor([int(i) for i in indices_str], dtype=torch.long).unsqueeze(0)
             
-            # Handle 2x/4x latents. If not disabled, create zero tensors.
             if "no_2x" not in commands:
                 clean_latents_2x = torch.zeros((B, C, 2, H, W), dtype=start_latent.dtype)
                 clean_latent_2x_indices = torch.arange(latent_window_size + 1, latent_window_size + 3).unsqueeze(0)
@@ -1129,12 +1089,9 @@ class FramePackSingleFrameSampler:
                 clean_latents_4x = torch.zeros((B, C, 16, H, W), dtype=start_latent.dtype)
                 clean_latent_4x_indices = torch.arange(latent_window_size + 3, latent_window_size + 19).unsqueeze(0)
 
-            # Handle `no_post` - This means we should NOT add a zero tensor at the end.
-            # The logic is now to only include what's explicitly provided.
             if "no_post" in commands:
-                pass # The zero tensor is not added by default anymore
+                pass
             
-            # Image embeds blending logic
             if use_kisekaeichi and reference_image_embeds is not None and start_image_encoder_last_hidden_state is not None:
                 ref_weight = 0.3
                 image_encoder_last_hidden_state = torch.lerp(start_image_encoder_last_hidden_state, reference_image_embeds["last_hidden_state"].to(device, base_dtype), ref_weight)
@@ -1145,13 +1102,11 @@ class FramePackSingleFrameSampler:
             print(f"  - Clean 2x enabled: {clean_latents_2x is not None}")
             print(f"  - Clean 4x enabled: {clean_latents_4x is not None}")
             
-        # 初期サンプルの処理
         input_init_latents = None
         if initial_samples is not None:
             input_init_latents = initial_samples[:, :, 0:1, :, :].to(device)
-            print("初期サンプルを設定しました")
+            print("Initial samples set")
 
-        # ComfyUI用のセットアップ
         comfy_model = HyVideoModel(
             HyVideoModelConfig(base_dtype),
             model_type=comfy.model_base.ModelType.FLOW,
@@ -1161,10 +1116,8 @@ class FramePackSingleFrameSampler:
         from latent_preview import prepare_callback
         callback = prepare_callback(patcher, steps)
 
-        # モデルをGPUに移動
         move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
 
-        # TeaCacheの設定
         if use_teacache:
             if enable_magcache:
                 print("Warning: TEACache and MagCache are both enabled. Disabling TEACache.")
@@ -1174,13 +1127,12 @@ class FramePackSingleFrameSampler:
         else:
             transformer.initialize_teacache(enable_teacache=False)
 
-        # MagCache: Reset before sampling
         if enable_magcache and hasattr(transformer, 'reset_magcache'):
             transformer.reset_magcache(steps)
 
-        print("=== サンプリング開始 ===")
+        print("=== Starting Sampling ===")
         print(f"sample_num_frames: {sample_num_frames}")
-        print(f"clean_latents使用フレーム数: {clean_latents.shape[2] if clean_latents is not None else 0}")
+        print(f"clean_latents frames used: {clean_latents.shape[2] if clean_latents is not None else 0}")
         print(f"clean_latent_2x_indices: {clean_latent_2x_indices}")
         print(f"clean_latent_4x_indices: {clean_latent_4x_indices}")
         
@@ -1192,7 +1144,7 @@ class FramePackSingleFrameSampler:
                 strength=denoise_strength,
                 width=W * 8,
                 height=H * 8,
-                frames=sample_num_frames,  # 1フレーム固定
+                frames=sample_num_frames,
                 real_guidance_scale=cfg,
                 distilled_guidance_scale=guidance_scale,
                 guidance_rescale=0,
@@ -1218,7 +1170,6 @@ class FramePackSingleFrameSampler:
                 callback=callback,
             )
 
-        # MagCache: Postprocess and Calibration Data Output
         if enable_magcache and magcache_calibration:
             try:
                 if hasattr(transformer, 'get_calibration_data'):
@@ -1235,8 +1186,6 @@ class FramePackSingleFrameSampler:
             except Exception as e:
                 print(f"Error getting MagCache calibration data: {e}")
 
-        # クリーンアップ
-        # Check if keep_model_in_vram was set on the instance (by the experimental node)
         if not getattr(self, 'keep_model_in_vram', False):
             transformer.to(offload_device)
             mm.soft_empty_cache()
@@ -1244,9 +1193,8 @@ class FramePackSingleFrameSampler:
         else:
             print("Model kept in VRAM.")
 
-        # 出力処理
-        mode_info = "Advanced One-Frame" if advanced_one_frame_mode else "Kisekaeichi" if use_kisekaeichi else "通常"
-        print(f"=== 1フレーム生成完了 ({mode_info}モード): {generated_latents.shape} ===")
+        mode_info = "Advanced One-Frame" if advanced_one_frame_mode else "Kisekaeichi" if use_kisekaeichi else "Normal"
+        print(f"=== Single frame generation complete ({mode_info} mode): {generated_latents.shape} ===")
         
         return {"samples": generated_latents / vae_scaling_factor},
 
@@ -1257,7 +1205,6 @@ class FramePackSingleFrameSamplerExperimental:
         types = FramePackSingleFrameSampler.INPUT_TYPES()
         types["required"]["keep_model_in_vram"] = ("BOOLEAN", {"default": False, "tooltip": "Keep model in VRAM after generation for faster subsequent runs. May cause OOM with other nodes."})
         
-        # Add MagCache inputs to the experimental node
         magcache_inputs = {
             "enable_magcache": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache for faster inference."}),
             "magcache_mag_ratios_str": ("STRING", {"default": "", "multiline": False, "tooltip": "Comma-separated float values for MagCache ratios. Leave empty for default."}),
@@ -1268,14 +1215,12 @@ class FramePackSingleFrameSamplerExperimental:
         }
         types["required"].update(magcache_inputs)
 
-        # Add RoPE inputs to the experimental node
         rope_inputs = {
             "rope_scaling_factor": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.01, "tooltip": "RoPE scaling factor for H/W dimensions. Default is 1.0 (no scaling)."}),
             "rope_scaling_timestep_threshold": ("INT", {"default": 1001, "min": 0, "max": 1001, "step": 1, "tooltip": "Timestep threshold to start applying RoPE scaling. 1001 to disable."}),
         }
         types["required"].update(rope_inputs)
 
-        # Add One-Frame Inference controls
         one_frame_inputs = {
             "advanced_one_frame_mode": ("BOOLEAN", {"default": False, "tooltip": "Enable advanced one-frame inference mode to override Kisekaeichi settings."}),
             "one_frame_target_index": ("INT", {"default": 1, "min": 0, "max": 32, "step": 1, "tooltip": "Target index for generation."}),
@@ -1285,10 +1230,8 @@ class FramePackSingleFrameSamplerExperimental:
             "one_frame_no_4x": ("BOOLEAN", {"default": True, "tooltip": "Disable 4x clean latents."}),
             "one_frame_no_post": ("BOOLEAN", {"default": True, "tooltip": "Disable post clean latents."}),
         }
-        # Add to optional to not break existing workflows
         types["optional"].update(one_frame_inputs)
         
-        # Hide the string input, it's now constructed internally
         if "one_frame_mode_str" in types["optional"]:
             del types["optional"]["one_frame_mode_str"]
 
@@ -1307,7 +1250,6 @@ class FramePackSingleFrameSamplerExperimental:
                 start_latent=None, image_embeds=None, 
                 initial_samples=None, denoise_strength=1.0, use_kisekaeichi=False, reference_latent=None, 
                 reference_image_embeds=None, target_index=1, history_index=13, input_mask=None, reference_mask=None,
-                # New one-frame args
                 advanced_one_frame_mode=False, 
                 one_frame_target_index=1, one_frame_control_index_1=0, one_frame_control_index_2=13,
                 one_frame_no_2x=True, one_frame_no_4x=True, one_frame_no_post=True):
@@ -1315,7 +1257,7 @@ class FramePackSingleFrameSamplerExperimental:
         original_sampler = FramePackSingleFrameSampler()
         original_sampler.keep_model_in_vram = keep_model_in_vram
 
-        # Construct the one_frame_mode_str from the individual inputs
+        # Construct the one_frame_mode_str from UI inputs
         one_frame_mode_str = ""
         if advanced_one_frame_mode:
             commands = []
@@ -1329,19 +1271,15 @@ class FramePackSingleFrameSamplerExperimental:
                 commands.append("no_post")
             one_frame_mode_str = ", ".join(commands)
 
-        # Pass all arguments, including the constructed string, to the base sampler
         result = original_sampler.process(
             model, shift, positive, negative, latent_window_size, use_teacache, teacache_rel_l1_thresh, steps, cfg,
             guidance_scale, seed, sampler, gpu_memory_preservation, start_latent, image_embeds, 
             initial_samples, denoise_strength, use_kisekaeichi, reference_latent, 
             reference_image_embeds, target_index, history_index, input_mask, reference_mask,
-            # Pass MagCache parameters
             enable_magcache=enable_magcache, magcache_mag_ratios_str=magcache_mag_ratios_str, 
             magcache_retention_ratio=magcache_retention_ratio, magcache_threshold=magcache_threshold, 
             magcache_k=magcache_k, magcache_calibration=magcache_calibration,
-            # Pass RoPE parameters
             rope_scaling_factor=rope_scaling_factor, rope_scaling_timestep_threshold=rope_scaling_timestep_threshold,
-            # Pass One-Frame parameters
             advanced_one_frame_mode=advanced_one_frame_mode, one_frame_mode_str=one_frame_mode_str
         )
         

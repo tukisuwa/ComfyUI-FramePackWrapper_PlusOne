@@ -34,9 +34,9 @@ from .diffusers_helper.bucket_tools import find_nearest_bucket
 from diffusers.loaders.lora_conversion_utils import _convert_hunyuan_video_lora_to_diffusers
 
 def patched_convert_hunyuan_video_lora(original_state_dict):
-    """Patched version that handles problematic tensors during conversion"""
+    """Convert LoRA weights while handling problematic tensors"""
     try:
-        # Filter out problematic tensors first
+
         filtered_state_dict = {}
         for key, value in original_state_dict.items():
             if isinstance(value, torch.Tensor):
@@ -49,7 +49,7 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
         
         print(f"After filtering: {len(filtered_state_dict)} valid keys")
         
-        # First try the original conversion
+
         try:
             from diffusers.loaders.lora_conversion_utils import _convert_hunyuan_video_lora_to_diffusers
             result = _convert_hunyuan_video_lora_to_diffusers(filtered_state_dict)
@@ -85,7 +85,7 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                     state_dict[key.replace("img_attn_qkv", "attn.to_k")] = weight
                     state_dict[key.replace("img_attn_qkv", "attn.to_v")] = weight
                 else:
-                    # Ensure tensor is properly sized before chunking
+
                     if weight.dim() == 0 or weight.size(0) < 3:
                         logger.warning(f"Invalid tensor size for {key}: {weight.shape}. Using equal splits.")
                         # Create minimal placeholders
@@ -285,9 +285,7 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
             "final_layer.adaLN_modulation.1": remap_norm_scale_shift_,
         }
 
-        # Some folks attempt to make their state dict compatible with diffusers by adding "transformer." prefix to all keys
-        # and use their custom code. To make sure both "original" and "attempted diffusers" loras work as expected, we make
-        # sure that both follow the same initial format by stripping off the "transformer." prefix.
+                # Handle both original and prefixed ("transformer.") state dict keys
         for key in list(converted_state_dict.keys()):
             try:
                 if key.startswith("transformer."):
@@ -298,7 +296,7 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                 logger.warning(f"Error processing key {key}: {str(e)}")
                 # Skip if we can't process this key properly
 
-        # Rename and remap the state dict keys
+
         for key in list(converted_state_dict.keys()):
             try:
                 new_key = key[:]
@@ -319,7 +317,7 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
                 logger.warning(f"Error processing key {key}: {str(e)}")
                 # Skip if we can't process this key properly
 
-        # Add back the "transformer." prefix
+
         for key in list(converted_state_dict.keys()):
             try:
                 converted_state_dict[f"transformer.{key}"] = converted_state_dict.pop(key)
@@ -359,38 +357,35 @@ class HyVideoModelConfig:
         self.unet_config["disable_unet_model_creation"] = True
 
 class FramePackTorchCompileSettings:
-    @classmethod
+    @classmethod 
     def INPUT_TYPES(s):
         return {
             "required": {
                 "backend": (["inductor","cudagraphs"], {"default": "inductor"}),
-                "fullgraph": ("BOOLEAN", {"default": False, "tooltip": "Enable full graph mode"}),
+                "fullgraph": ("BOOLEAN", {"default": False}),
                 "mode": (["default", "max-autotune", "max-autotune-no-cudagraphs", "reduce-overhead"], {"default": "default"}),
-                "dynamic": ("BOOLEAN", {"default": False, "tooltip": "Enable dynamic mode"}),
-                "dynamo_cache_size_limit": ("INT", {"default": 64, "min": 0, "max": 1024, "step": 1, "tooltip": "torch._dynamo.config.cache_size_limit"}),
-                "compile_single_blocks": ("BOOLEAN", {"default": True, "tooltip": "Enable single block compilation"}),
-                "compile_double_blocks": ("BOOLEAN", {"default": True, "tooltip": "Enable double block compilation"}),
+                "dynamic": ("BOOLEAN", {"default": False}),
+                "dynamo_cache_size_limit": ("INT", {"default": 64, "min": 0, "max": 1024, "step": 1}),
+                "compile_single_blocks": ("BOOLEAN", {"default": True}),
+                "compile_double_blocks": ("BOOLEAN", {"default": True}),
             },
         }
     RETURN_TYPES = ("FRAMEPACKCOMPILEARGS",)
-    RETURN_NAMES = ("torch_compile_args",)
+    RETURN_NAMES = ("torch_compile_args",) 
     FUNCTION = "loadmodel"
     CATEGORY = "HunyuanVideoWrapper"
-    DESCRIPTION = "torch.compile settings, when connected to the model loader, torch.compile of the selected layers is attempted. Requires Triton and torch 2.5.0 is recommended"
+    DESCRIPTION = "Configure torch.compile settings for model optimization"
 
     def loadmodel(self, backend, fullgraph, mode, dynamic, dynamo_cache_size_limit, compile_single_blocks, compile_double_blocks):
-
-        compile_args = {
+        return ({
             "backend": backend,
-            "fullgraph": fullgraph,
+            "fullgraph": fullgraph, 
             "mode": mode,
             "dynamic": dynamic,
             "dynamo_cache_size_limit": dynamo_cache_size_limit,
             "compile_single_blocks": compile_single_blocks,
             "compile_double_blocks": compile_double_blocks
-        }
-
-        return (compile_args, )
+        }, )
 
 #region Model loading
 class DownloadAndLoadFramePackModel:
@@ -401,7 +396,7 @@ class DownloadAndLoadFramePackModel:
                 "model": (["lllyasviel/FramePackI2V_HY"],),
 
             "base_precision": (["fp32", "bf16", "fp16"], {"default": "bf16"}),
-            "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2'], {"default": 'disabled', "tooltip": "optional quantization method"}),
+            "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2'], {"default": 'disabled'}),
             },
             "optional": {
                 "attention_mode": ([
@@ -470,21 +465,19 @@ class FramePackLoraSelect:
     def INPUT_TYPES(s):
         return {
             "required": {
-               "lora": (folder_paths.get_filename_list("loras"),
-                {"tooltip": "LORA models are expected to be in ComfyUI/models/loras with .safetensors extension"}),
-                "strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.0001, "tooltip": "LORA strength, set to 0.0 to unmerge the LORA"}),
-                "fuse_lora": ("BOOLEAN", {"default": True, "tooltip": "Fuse the LORA model with the base model. This is recommended for better performance."}),
+               "lora": (folder_paths.get_filename_list("loras"), {}),
+                "strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.0001}),
+                "fuse_lora": ("BOOLEAN", {"default": True}),
             },
             "optional": {
-                "prev_lora":("FPLORA", {"default": None, "tooltip": "For loading multiple LoRAs"}),
+                "prev_lora":("FPLORA", {"default": None}),
             }
         }
 
     RETURN_TYPES = ("FPLORA",)
-    RETURN_NAMES = ("lora", )
-    FUNCTION = "getlorapath"
+    RETURN_NAMES = ("lora",)
+    FUNCTION = "getlorapath" 
     CATEGORY = "FramePackWrapper"
-    DESCRIPTION = "Select a LoRA model from ComfyUI/models/loras"
 
     def getlorapath(self, lora, strength, prev_lora=None, fuse_lora=True):
         loras_list = []
@@ -527,23 +520,20 @@ class FramePackLoraSelectExperimental(FramePackLoraLoader):
     def INPUT_TYPES(s):
         return {
             "required": {
-               "lora": (folder_paths.get_filename_list("loras"),
-                {"tooltip": "LORA models are expected to be in ComfyUI/models/loras with .safetensors extension"}),
-                "strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.0001, "tooltip": "LORA strength, set to 0.0 to unmerge the LORA"}),
+               "lora": (folder_paths.get_filename_list("loras"), {}),
+                "strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.0001}),
             },
             "optional": {
-                "prev_lora":("FPLORA", {"default": None, "tooltip": "For loading multiple LoRAs"}),
+                "prev_lora":("FPLORA", {"default": None}),
             }
         }
 
     RETURN_TYPES = ("FPLORA",)
-    RETURN_NAMES = ("lora", )
+    RETURN_NAMES = ("lora",)
     FUNCTION = "getlorapath_simple"
     CATEGORY = "FramePackWrapper"
-    DESCRIPTION = "Select a LoRA model from ComfyUI/models/loras"
 
     def getlorapath_simple(self, lora, strength, prev_lora=None):
-        # Use default values for vram and prewarm
         return super().getlorapath(lora, strength, "", prev_lora, max_vram_gb=4.0, prewarm_vram_gb=2.0)
 
 class FramePackLoraSelectAdvancedExperimental(FramePackLoraLoader):
@@ -636,7 +626,7 @@ class LoadFramePackModel:
 
             "base_precision": (["fp32", "bf16", "fp16"], {"default": "bf16"}),
             "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2'], {"default": 'disabled', "tooltip": "optional quantization method"}),
-            "load_device": (["main_device", "offload_device"], {"default": "cuda", "tooltip": "Initialize the model on the main device or offload device"}),
+            "load_device": (["main_device", "offload_device"], {"default": "cuda"}),
             },
             "optional": {
                 "attention_mode": ([
@@ -645,7 +635,7 @@ class LoadFramePackModel:
                     "sageattn",
                     ], {"default": "sdpa"}),
                 "compile_args": ("FRAMEPACKCOMPILEARGS", ),
-                "lora": ("FPLORA", {"default": None, "tooltip": "LORA model to load"}),
+                "lora": ("FPLORA", {"default": None}),
             }
         }
 
@@ -813,9 +803,7 @@ class LoadFramePackModelExperimental:
     def loadmodel(self, model, base_precision, quantization,
                   compile_args=None, attention_mode="sdpa", lora=None, load_device="main_device"):
         
-        # If LoRA is used, unload any model ComfyUI might have pre-loaded.
-        # This is critical for memory efficiency, ensuring the lazy-loading merge process starts with clean VRAM.
-        if lora is not None:
+                if lora is not None:
             print("LoRA detected. Unloading any pre-loaded models to ensure memory-efficient merge.")
             mm.unload_all_models()
             mm.soft_empty_cache()
@@ -900,24 +888,20 @@ class FramePackFindNearestBucket:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-            "image": ("IMAGE", {"tooltip": "Image to resize"}),
-            "base_resolution": ("INT", {"default": 640, "min": 64, "max": 2048, "step": 16, "tooltip": "Width of the image to encode"}),
+            "image": ("IMAGE",),
+            "base_resolution": ("INT", {"default": 640, "min": 64, "max": 2048, "step": 16}),
             },
         }
 
-    RETURN_TYPES = ("INT", "INT", )
-    RETURN_NAMES = ("width","height",)
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("width","height")
     FUNCTION = "process"
     CATEGORY = "FramePackWrapper"
-    DESCRIPTION = "Finds the closes resolution bucket as defined in the orignal code"
 
     def process(self, image, base_resolution):
-
         H, W = image.shape[1], image.shape[2]
-
         new_height, new_width = find_nearest_bucket(H, W, resolution=base_resolution)
-
-        return (new_width, new_height, )
+        return (new_width, new_height)
 
 
 class FramePackSampler:
@@ -925,18 +909,18 @@ class FramePackSampler:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model": ("FramePackMODEL",),
+                "model": ("FramePackMODEL",), 
                 "positive": ("CONDITIONING",),
                 "negative": ("CONDITIONING",),
-                "start_latent": ("LATENT", {"tooltip": "init Latents to use for image2video"} ),
+                "start_latent": ("LATENT",),
                 "steps": ("INT", {"default": 30, "min": 1}),
-                "use_teacache": ("BOOLEAN", {"default": True, "tooltip": "Use teacache for faster sampling."}),
-                "teacache_rel_l1_thresh": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "The threshold for the relative L1 loss."}),
+                "use_teacache": ("BOOLEAN", {"default": True}),
+                "teacache_rel_l1_thresh": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 30.0, "step": 0.01}),
                 "guidance_scale": ("FLOAT", {"default": 10.0, "min": 0.0, "max": 32.0, "step": 0.01}),
                 "shift": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "latent_window_size": ("INT", {"default": 9, "min": 1, "max": 33, "step": 1, "tooltip": "The size of the latent window to use for sampling."}),
+                "latent_window_size": ("INT", {"default": 9, "min": 1, "max": 33, "step": 1}),
                 "total_second_length": ("FLOAT", {"default": 5, "min": 1, "max": 120, "step": 0.1, "tooltip": "The total length of the video in seconds."}),
                 "gpu_memory_preservation": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 128.0, "step": 0.1, "tooltip": "The amount of GPU memory to preserve."}),
                 "sampler": (["unipc_bh1", "unipc_bh2"],
