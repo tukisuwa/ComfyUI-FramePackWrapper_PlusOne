@@ -628,43 +628,28 @@ class FramePackSampler_F1_Experimental(FramePackSampler_F1):
 
     def process(self, model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, steps, cfg,
                 guidance_scale, shift, seed, sampler, gpu_memory_preservation, keep_model_in_vram,
-                enable_magcache, magcache_mag_ratios_str, magcache_retention_ratio, magcache_threshold, magcache_k, magcache_calibration, # MagCache args
-                rope_scaling_factor, rope_scaling_timestep_threshold, # RoPE args
+                enable_magcache, magcache_mag_ratios_str, magcache_retention_ratio, magcache_threshold, magcache_k, magcache_calibration, 
+                rope_scaling_factor, rope_scaling_timestep_threshold,
                 start_image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None,
                 embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
 
-        # To avoid re-copying the entire process method, let's pass all arguments
-        # to the superclass method, which now includes MagCache and RoPE args.
         result = super().process(model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, steps, cfg,
                                  guidance_scale, shift, seed, sampler, gpu_memory_preservation,
                                  start_image_embeds, start_latent, end_latent, end_image_embeds,
                                  embed_interpolation, start_embed_strength, initial_samples, denoise_strength,
-                                 # Pass MagCache args to the base implementation
                                  enable_magcache=enable_magcache, magcache_mag_ratios_str=magcache_mag_ratios_str,
                                  magcache_retention_ratio=magcache_retention_ratio, magcache_threshold=magcache_threshold,
                                  magcache_k=magcache_k, magcache_calibration=magcache_calibration,
-                                 # Pass RoPE args to the base implementation
                                  rope_scaling_factor=rope_scaling_factor, rope_scaling_timestep_threshold=rope_scaling_timestep_threshold)
         
-        # The base `process` method handles offloading by default.
-        # If we want to keep it in VRAM, we need to bring it back.
-        # This is inefficient. Let's modify the base class to not offload,
-        # and handle it here.
-        # For now, this implementation assumes the base class has been modified
-        # to not offload by default, or that this logic is acceptable.
         
         transformer = model["transformer"]
         offload_device = mm.unet_offload_device()
         device = mm.get_torch_device()
 
         if not keep_model_in_vram:
-            # This is now redundant if the base class does it, but safer to have.
-            # print("Experimental node ensuring model is offloaded.")
-            # transformer.to(offload_device)
-            # mm.soft_empty_cache()
-            pass # The base class already handles this.
+            pass 
         else:
-            # If the base class offloaded, we must bring it back.
             print("Experimental node ensuring model is kept in VRAM.")
             transformer.to(device)
 
@@ -794,59 +779,8 @@ Outputs a dictionary containing:
         if initial_samples is not None: initial_samples = initial_samples["samples"] * vae_scaling_factor
         if end_latent is not None: end_latent = end_latent["samples"] * vae_scaling_factor
         
-        # The rest of the setup logic is identical to the original `process` method...
-        # ... [omitting for brevity, as it's a direct copy] ...
-        
-        # The loop starts here
-        # [ ... copy the entire for loop from the original process method ... ]
-        # For the sake of this example, we'll just show the final part.
-        
-        # After the for loop from the original method finishes...
-        # real_history_latents would have been computed.
-        # Let's assume the full loop is here and we have `real_history_latents`
-        
-        # We need to re-run the original logic to get the result first.
-        # A simple inheritance call is problematic because of the final offload.
-        # The cleanest way is to copy the original `process` and modify its end.
-
         original_process = FramePackSampler_F1.process
         
-        # We can't pass 'self' to the original unbound method directly if it's not a static method.
-        # It's an instance method, so we must call it from an instance.
-        
-        # Re-running the logic here to get the result without offloading is complex.
-        # The most straightforward, if slightly duplicative, approach is to copy the method.
-
-        # Let's copy the full `process` method and just change the end.
-        # This avoids complex inheritance issues with the final offload line.
-
-        # --- Start of copied `process` logic ---
-        # ... [All the setup code from the original `process` method] ...
-        # --- End of copied `process` logic ---
-
-        # The only change is at the very end.
-        # Let's just modify the original method's final lines in this edit.
-        # The superclass approach is flawed.
-        # So we'll copy the whole method here.
-        # (The following is the full `process` method, with the modified end)
-
-        # [Full `process` method code from FramePackSampler_F1 is copied here]
-        # ... (setup code) ...
-        # ... (loop code) ...
-        # --- At the end of the copied method ---
-
-        # Original end:
-        # transformer.to(offload_device)
-        # mm.soft_empty_cache()
-        # return {"samples": real_history_latents / vae_scaling_factor},
-        
-        # The class inheritance trick is cleaner. Let's stick with that.
-        # The base class offloads. The subclass must bring it back if needed.
-        
-        # It seems the easiest way is to duplicate the node and modify the last lines.
-        # So we create a new class, copy the process method, and change its ending.
-        
-        # This will be done in the final edit block for clarity.
         pass
 
 class FramePackTimestampedTextEncode:

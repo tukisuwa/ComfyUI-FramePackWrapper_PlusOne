@@ -59,11 +59,6 @@ def patched_convert_hunyuan_video_lora(original_state_dict):
             print(f"Error in standard conversion: {e}")
             print("Falling back to custom conversion")
             
-            # If standard conversion fails, use the custom implementation
-            # [Insert the custom conversion code here that was previously unreachable]
-            # Include all the remapper functions and conversion logic
-            
-            # Return the result of the custom conversion
             return converted_state_dict
             
     except Exception as e:
@@ -1078,10 +1073,6 @@ class FramePackSampler:
         move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
 
         if total_latent_sections > 4:
-            # In theory the latent_paddings should follow the above sequence, but it seems that duplicating some
-            # items looks better than expanding it when total_latent_sections > 4
-            # One can try to remove below trick and just
-            # use `latent_paddings = list(reversed(range(total_latent_sections)))` to compare
             latent_paddings = [3] + [2] * (total_latent_sections - 3) + [1, 0]
             latent_paddings_list = latent_paddings.copy()
 

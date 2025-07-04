@@ -93,11 +93,10 @@ def convert_from_diffusion_pipe_or_something(lora_sd: dict[str, torch.Tensor], p
         new_key = f"{prefix}{key_body}".replace(".", "_").replace("_lora_A_", ".lora_down.").replace("_lora_B_", ".lora_up.")
         new_weights_sd[new_key] = weight
 
-        lora_name = new_key.split(".")[0]  # before first dot
+        lora_name = new_key.split(".")[0]  
         if lora_name not in lora_dims and "lora_down" in new_key:
             lora_dims[lora_name] = weight.shape[0]
 
-    # add alpha with rank
     for lora_name, dim in lora_dims.items():
         new_weights_sd[f"{lora_name}.alpha"] = torch.tensor(dim, dtype=weight.dtype)
 
