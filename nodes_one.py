@@ -379,7 +379,7 @@ class FramePackTorchCompileSettings:
     RETURN_TYPES = ("FRAMEPACKCOMPILEARGS",)
     RETURN_NAMES = ("torch_compile_args",)
     FUNCTION = "loadmodel"
-    CATEGORY = "HunyuanVideoWrapper"
+    CATEGORY = "FramePackWrapper"
     DESCRIPTION = "torch.compile settings, when connected to the model loader, torch.compile of the selected layers is attempted. Requires Triton and torch 2.5.0 is recommended"
 
     def loadmodel(self, backend, fullgraph, mode, dynamic, dynamo_cache_size_limit, compile_single_blocks, compile_double_blocks):
@@ -963,17 +963,57 @@ class FramePackSingleFrameSampler:
     DESCRIPTION = "Single frame sampler with Kisekaeichi (style transfer) support"
 
     def process(self, model, shift, positive, negative, latent_window_size, use_teacache, teacache_rel_l1_thresh, steps, cfg,
-                guidance_scale, seed, sampler, gpu_memory_preservation, start_latent=None, image_embeds=None, 
-                initial_samples=None, denoise_strength=1.0, use_kisekaeichi=False, reference_latent=None, 
-                reference_image_embeds=None, target_index=1, history_index=13, input_mask=None, reference_mask=None):
-        
-        print("=== 1フレーム推論モード ===")
-        if use_kisekaeichi:
-            print("Kisekaeichi（着せ替え）モード有効")
-            print(f"target_index: {target_index}, history_index: {history_index}")
+                guidance_scale, seed, sampler, gpu_memory_preservation, start_latent=None, image_embeds=None,
+                initial_samples=None, denoise_strength=1.0, use_kisekaeichi=False, reference_latent=None,
+                reference_image_embeds=None, target_index=1, history_index=13, input_mask=None, reference_mask=None,
+                # MagCache Parameters are optional and passed from the experimental node
+                enable_magcache=False, magcache_mag_ratios_str="", magcache_retention_ratio=0.2,
+                magcache_threshold=0.24, magcache_k=6, magcache_calibration=False,
+                # RoPE Parameters are optional and passed from the experimental node
+                rope_scaling_factor=1.0, rope_scaling_timestep_threshold=1001,
+                # Advanced One-Frame Mode parameters
+                advanced_one_frame_mode=False, one_frame_mode_str=""):
 
+        print("=== 1フレーム推論モード ===")
         transformer = model["transformer"]
         base_dtype = model["dtype"]
+
+        # Reset cache flags before setting new values
+        if hasattr(transformer, 'enable_teacache'):
+            transformer.enable_teacache = False
+        if hasattr(transformer, 'enable_magcache'):
+            transformer.enable_magcache = False
+
+        # RoPE Scaling: Set parameters on the model
+        if hasattr(transformer, 'rope_scaling_factor'):
+            transformer.rope_scaling_factor = rope_scaling_factor
+        if hasattr(transformer, 'rope_scaling_timestep_threshold'):
+            transformer.rope_scaling_timestep_threshold = rope_scaling_timestep_threshold if rope_scaling_timestep_threshold <= 1000 else None
+
+        # MagCache: Initialize
+        if enable_magcache:
+            mag_ratios = None
+            if magcache_mag_ratios_str and not magcache_calibration:
+                try:
+                    mag_ratios = [float(x.strip()) for x in magcache_mag_ratios_str.split(',') if x.strip()]
+                except ValueError:
+                    print(f"Warning: Could not parse magcache_mag_ratios_str: {magcache_mag_ratios_str}. Using default ratios.")
+                    mag_ratios = None
+
+            print(f"Initializing MagCache with enable={enable_magcache}, retention_ratio={magcache_retention_ratio}, threshold={magcache_threshold}, K={magcache_k}, calibration={magcache_calibration}")
+            if hasattr(transformer, 'initialize_magcache'):
+                transformer.initialize_magcache(
+                    enable=enable_magcache,
+                    retention_ratio=magcache_retention_ratio,
+                    mag_ratios=mag_ratios,
+                    magcache_thresh=magcache_threshold,
+                    K=magcache_k,
+                    calibration=magcache_calibration,
+                )
+            else:
+                print("Warning: Transformer model does not have 'initialize_magcache' method. MagCache will not be used.")
+                enable_magcache = False
+
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
 
@@ -1021,180 +1061,90 @@ class FramePackSingleFrameSampler:
 
         # シード設定
         rnd = torch.Generator("cpu").manual_seed(seed)
-
-        # === 一つ目のコードに完全準拠した設定 ===
         
         # 1フレームモード固定設定
         sample_num_frames = 1
-        total_latent_sections = 1
-        latent_padding = 0
-        latent_padding_size = latent_padding * latent_window_size  # 0
         
-        # 一つ目のコードと同じインデックス構造
-        indices = torch.arange(0, sum([1, latent_padding_size, latent_window_size, 1, 2, 16])).unsqueeze(0)
-        split_sizes = [1, latent_padding_size, latent_window_size, 1, 2, 16]
+        # --- One-Frame Inference Mode Logic ---
+        # Initialize with default values, which can be overridden.
+        image_encoder_last_hidden_state = start_image_encoder_last_hidden_state
         
-        # latent_padding_sizeが0の場合の分割（一つ目のコードと完全同一）
-        if latent_padding_size == 0:
-            clean_latent_indices_pre = indices[:, 0:1]
-            latent_indices = indices[:, 1:1+latent_window_size]
-            clean_latent_indices_post = indices[:, 1+latent_window_size:2+latent_window_size]
-            clean_latent_2x_indices = indices[:, 2+latent_window_size:4+latent_window_size]
-            clean_latent_4x_indices = indices[:, 4+latent_window_size:20+latent_window_size]
-            blank_indices = torch.empty((1, 0), dtype=torch.long)
-        else:
-            clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split(split_sizes, dim=1)
+        # This setup is for a basic single-frame generation if no special modes are used.
+        # It passes the start_latent as a "clean latent" at index 0.
+        clean_latents = start_latent
+        clean_latent_indices = torch.tensor([[0]], dtype=torch.long)
+        latent_indices = torch.tensor([[latent_window_size - 1]], dtype=torch.long)
+        clean_latents_2x = None
+        clean_latent_2x_indices = None
+        clean_latents_4x = None
+        clean_latent_4x_indices = None
 
-        # 一つ目のコードの重要な処理：1フレームモード時のone_frame_inference処理
-        if sample_num_frames == 1:
-            if use_kisekaeichi and reference_latent is not None:
-                print("=== Kisekaeichi モード設定（完全版） ===")
-                
-                # 一つ目のコードのone_frame_inference処理を完全再現
-                one_frame_inference = set()
-                one_frame_inference.add(f"target_index={target_index}")
-                one_frame_inference.add(f"history_index={history_index}")
-                
-                # 公式実装に従った処理
-                latent_indices = indices[:, -1:]  # デフォルトは最後のフレーム
-                
-                # パラメータ解析と処理（一つ目のコードと同じ）
-                for one_frame_param in one_frame_inference:
-                    if one_frame_param.startswith("target_index="):
-                        target_idx = int(one_frame_param.split("=")[1])
-                        latent_indices[:, 0] = target_idx
-                        print(f"latent_indices設定: target_index={target_idx}")
-                    
-                    elif one_frame_param.startswith("history_index="):
-                        history_idx = int(one_frame_param.split("=")[1])
-                        clean_latent_indices_post[:, 0] = history_idx
-                        print(f"clean_latent_indices_post設定: history_index={history_idx}")
+        # Kisekaeichi mode is now a preset for the advanced mode
+        if use_kisekaeichi and not advanced_one_frame_mode:
+            print("--- Kisekaeichi Mode (Standard) ---")
+            advanced_one_frame_mode = True
+            one_frame_mode_str = f"target_index={target_index},control_indices=0;{history_index},no_2x,no_4x,no_post"
 
-                # history_latentsのダミーを作成（一つ目のコードと同じ構造）
-                history_latents = torch.zeros(size=(1, 16, 1 + 2 + 16, H, W), dtype=torch.float32, device='cpu')
-                
-                # clean_latents_preの設定（入力画像）
-                clean_latents_pre = start_latent.to(history_latents.dtype).to(history_latents.device)
-                if len(clean_latents_pre.shape) < 5:
-                    clean_latents_pre = clean_latents_pre.unsqueeze(2)
-                
-                # マスクの適用（入力画像）
-                if input_mask is not None:
-                    print("入力画像マスクを適用中...")
-                    try:
-                        height_latent, width_latent = clean_latents_pre.shape[-2:]
-                        
-                        if isinstance(input_mask, torch.Tensor):
-                            input_mask_tensor = input_mask
-                        else:
-                            input_mask_tensor = torch.from_numpy(input_mask)
-                        
-                        input_mask_resized = common_upscale(input_mask_tensor.unsqueeze(0).unsqueeze(0), 
-                                                        width_latent, height_latent, 
-                                                        "bilinear", "center").squeeze(0).squeeze(0)
-                        input_mask_resized = input_mask_resized.to(clean_latents_pre.device)[None, None, None, :, :]
-                        clean_latents_pre = clean_latents_pre * input_mask_resized
-                        print("入力画像マスクを適用しました")
-                    except Exception as e:
-                        print(f"入力マスク適用エラー: {e}")
-                
-                # clean_latents_postの設定（参照画像）
-                clean_latents_post = reference_latent[:, :, 0:1, :, :].to(history_latents.dtype).to(history_latents.device)
-                
-                # マスクの適用（参照画像）
+        if advanced_one_frame_mode:
+            print(f"--- Advanced One-Frame Mode ---")
+            print(f"Mode string: '{one_frame_mode_str}'")
+            commands = {s.strip() for s in one_frame_mode_str.split(',')}
+            
+            control_latents_list = []
+            
+            # Start with input latent
+            masked_start_latent = start_latent
+            if input_mask is not None:
+                mask_resized = common_upscale(input_mask.unsqueeze(0).unsqueeze(0), W, H, "bilinear", "center").squeeze(0).squeeze(0)
+                masked_start_latent = start_latent * mask_resized.to(start_latent.device)[None, None, None, :, :]
+            control_latents_list.append(masked_start_latent)
+
+            # Add reference latent if available
+            if reference_latent is not None:
+                masked_ref_latent = reference_latent
                 if reference_mask is not None:
-                    print("参照画像マスクを適用中...")
-                    try:
-                        height_latent, width_latent = clean_latents_post.shape[-2:]
-                        
-                        if isinstance(reference_mask, torch.Tensor):
-                            reference_mask_tensor = reference_mask
-                        else:
-                            reference_mask_tensor = torch.from_numpy(reference_mask)
-                        
-                        reference_mask_resized = common_upscale(reference_mask_tensor.unsqueeze(0).unsqueeze(0), 
-                                                            width_latent, height_latent, 
-                                                            "bilinear", "center").squeeze(0).squeeze(0)
-                        reference_mask_resized = reference_mask_resized.to(clean_latents_post.device)[None, None, None, :, :]
-                        clean_latents_post = clean_latents_post * reference_mask_resized
-                        print("参照画像マスクを適用しました")
-                    except Exception as e:
-                        print(f"参照マスク適用エラー: {e}")
-                
-                # clean_latentsを結合
-                clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
-                
-                # clean_latent_indicesを結合
-                clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
-                
-                clean_latents_2x_param = None
-                clean_latents_4x_param = None
-                clean_latent_2x_indices = None
-                clean_latent_4x_indices = None
-                
-                # 2x, 4x latentsの設定も無効化
-                clean_latents_2x = None
-                clean_latents_4x = None
-                
-                print("Kisekaeichi: 2x/4xインデックスを無効化しました")
-                
-                # 画像エンベッディングの処理（両方を活用）
-                if reference_image_encoder_last_hidden_state is not None and start_image_encoder_last_hidden_state is not None:
-                    # 重み付き平均で統合
-                    ref_weight = 0.3  # 参照画像の重み
-                    input_weight = 1.0 - ref_weight
-                    image_encoder_last_hidden_state = (
-                        start_image_encoder_last_hidden_state * input_weight + 
-                        reference_image_encoder_last_hidden_state * ref_weight
-                    )
-                    print(f"画像エンベッディングを統合 (入力:{input_weight:.2f}, 参照:{ref_weight:.2f})")
-                elif reference_image_encoder_last_hidden_state is not None:
-                    image_encoder_last_hidden_state = reference_image_encoder_last_hidden_state
-                else:
-                    image_encoder_last_hidden_state = start_image_encoder_last_hidden_state
-                
-                print(f"Kisekaeichi設定完了:")
-                print(f"  - clean_latents.shape: {clean_latents.shape} (入力+参照)")
-                print(f"  - latent_indices: {latent_indices}")
-                print(f"  - clean_latent_indices: {clean_latent_indices}")
-                print(f"  - sample_num_frames: {sample_num_frames}")
-                print(f"  - 2x/4x無効化: True")
-                
-            else:
-                # 通常モード（参照画像なし）
-                all_indices = torch.arange(0, latent_window_size).unsqueeze(0)
-                latent_indices = all_indices[:, -1:]
-                
-                clean_latents_pre = start_latent.to(torch.float32).cpu()
-                if len(clean_latents_pre.shape) < 5:
-                    clean_latents_pre = clean_latents_pre.unsqueeze(2)
-                
-                clean_latents_post = torch.zeros_like(clean_latents_pre)
-                clean_latents = torch.cat([clean_latents_pre, clean_latents_post], dim=2)
-                clean_latent_indices = torch.cat([clean_latent_indices_pre, clean_latent_indices_post], dim=1)
-                
-                # 通常モードでのインデックス調整
-                clean_latent_indices = torch.tensor([[0]], dtype=clean_latent_indices.dtype, device=clean_latent_indices.device)
-                clean_latents = clean_latents[:, :, :1, :, :]
-                
-                clean_latents_2x_param = None
-                clean_latents_4x_param = None
-                clean_latent_2x_indices = None
-                clean_latent_4x_indices = None
-                
-                # 2x, 4x latentsの設定も無効化
-                clean_latents_2x = None
-                clean_latents_4x = None
-                
-                print("Kisekaeichi: 2x/4xインデックスを無効化しました")
-                
-                image_encoder_last_hidden_state = start_image_encoder_last_hidden_state
-                
-                print("通常モード設定:")
-                print(f"  - clean_latents.shape: {clean_latents.shape}")
-                print(f"  - latent_indices: {latent_indices}")
-                print(f"  - clean_latent_indices: {clean_latent_indices}")
+                    mask_resized = common_upscale(reference_mask.unsqueeze(0).unsqueeze(0), W, H, "bilinear", "center").squeeze(0).squeeze(0)
+                    masked_ref_latent = reference_latent * mask_resized.to(reference_latent.device)[None, None, None, :, :]
+                control_latents_list.append(masked_ref_latent)
 
+            clean_latents = torch.cat(control_latents_list, dim=2)
+
+            # Default indices
+            latent_indices = torch.tensor([[latent_window_size - 1]], dtype=torch.long)
+            clean_latent_indices = torch.arange(clean_latents.shape[2], dtype=torch.long).unsqueeze(0)
+
+            # Parse string commands for index overrides
+            for cmd in commands:
+                if cmd.startswith("target_index="):
+                    latent_indices[0, 0] = int(cmd.split('=')[1])
+                elif cmd.startswith("control_indices="):
+                    indices_str = cmd.split('=')[1].split(';')
+                    clean_latent_indices = torch.tensor([int(i) for i in indices_str], dtype=torch.long).unsqueeze(0)
+            
+            # Handle 2x/4x latents. If not disabled, create zero tensors.
+            if "no_2x" not in commands:
+                clean_latents_2x = torch.zeros((B, C, 2, H, W), dtype=start_latent.dtype)
+                clean_latent_2x_indices = torch.arange(latent_window_size + 1, latent_window_size + 3).unsqueeze(0)
+            if "no_4x" not in commands:
+                clean_latents_4x = torch.zeros((B, C, 16, H, W), dtype=start_latent.dtype)
+                clean_latent_4x_indices = torch.arange(latent_window_size + 3, latent_window_size + 19).unsqueeze(0)
+
+            # Handle `no_post` - This means we should NOT add a zero tensor at the end.
+            # The logic is now to only include what's explicitly provided.
+            if "no_post" in commands:
+                pass # The zero tensor is not added by default anymore
+            
+            # Image embeds blending logic
+            if use_kisekaeichi and reference_image_embeds is not None and start_image_encoder_last_hidden_state is not None:
+                ref_weight = 0.3
+                image_encoder_last_hidden_state = torch.lerp(start_image_encoder_last_hidden_state, reference_image_embeds["last_hidden_state"].to(device, base_dtype), ref_weight)
+
+            print(f"  - Final clean_latents shape: {clean_latents.shape}")
+            print(f"  - Final latent_indices: {latent_indices}")
+            print(f"  - Final clean_latent_indices: {clean_latent_indices}")
+            print(f"  - Clean 2x enabled: {clean_latents_2x is not None}")
+            print(f"  - Clean 4x enabled: {clean_latents_4x is not None}")
+            
         # 初期サンプルの処理
         input_init_latents = None
         if initial_samples is not None:
@@ -1216,13 +1166,21 @@ class FramePackSingleFrameSampler:
 
         # TeaCacheの設定
         if use_teacache:
-            transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
+            if enable_magcache:
+                print("Warning: TEACache and MagCache are both enabled. Disabling TEACache.")
+                transformer.initialize_teacache(enable_teacache=False)
+            else:
+                transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
         else:
             transformer.initialize_teacache(enable_teacache=False)
 
+        # MagCache: Reset before sampling
+        if enable_magcache and hasattr(transformer, 'reset_magcache'):
+            transformer.reset_magcache(steps)
+
         print("=== サンプリング開始 ===")
         print(f"sample_num_frames: {sample_num_frames}")
-        print(f"clean_latents使用フレーム数: {clean_latents.shape[2]}")
+        print(f"clean_latents使用フレーム数: {clean_latents.shape[2] if clean_latents is not None else 0}")
         print(f"clean_latent_2x_indices: {clean_latent_2x_indices}")
         print(f"clean_latent_4x_indices: {clean_latent_4x_indices}")
         
@@ -1260,20 +1218,141 @@ class FramePackSingleFrameSampler:
                 callback=callback,
             )
 
+        # MagCache: Postprocess and Calibration Data Output
+        if enable_magcache and magcache_calibration:
+            try:
+                if hasattr(transformer, 'get_calibration_data'):
+                    norm_ratio, norm_std, cos_dis = transformer.get_calibration_data()
+                    print("\nMagCache Calibration Data:")
+                    print(f"  - norm_ratio: {norm_ratio}")
+                    print(f"  - norm_std: {norm_std}")
+                    print(f"  - cos_dis: {cos_dis}")
+                    print("\nSuggested --magcache_mag_ratios (copy and paste):")
+                    suggested_ratios = [1.0] + norm_ratio
+                    print(",".join([f"{ratio:.5f}" for ratio in suggested_ratios]))
+                else:
+                    print("Warning: Transformer model does not have 'get_calibration_data' method.")
+            except Exception as e:
+                print(f"Error getting MagCache calibration data: {e}")
+
         # クリーンアップ
-        transformer.to(offload_device)
-        mm.soft_empty_cache()
+        # Check if keep_model_in_vram was set on the instance (by the experimental node)
+        if not getattr(self, 'keep_model_in_vram', False):
+            transformer.to(offload_device)
+            mm.soft_empty_cache()
+            print("Model offloaded from VRAM.")
+        else:
+            print("Model kept in VRAM.")
 
         # 出力処理
-        mode_info = "Kisekaeichi（latent+エンベッディング）" if use_kisekaeichi else "通常"
+        mode_info = "Advanced One-Frame" if advanced_one_frame_mode else "Kisekaeichi" if use_kisekaeichi else "通常"
         print(f"=== 1フレーム生成完了 ({mode_info}モード): {generated_latents.shape} ===")
         
         return {"samples": generated_latents / vae_scaling_factor},
 
+
+class FramePackSingleFrameSamplerExperimental:
+    @classmethod
+    def INPUT_TYPES(s):
+        types = FramePackSingleFrameSampler.INPUT_TYPES()
+        types["required"]["keep_model_in_vram"] = ("BOOLEAN", {"default": False, "tooltip": "Keep model in VRAM after generation for faster subsequent runs. May cause OOM with other nodes."})
+        
+        # Add MagCache inputs to the experimental node
+        magcache_inputs = {
+            "enable_magcache": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache for faster inference."}),
+            "magcache_mag_ratios_str": ("STRING", {"default": "", "multiline": False, "tooltip": "Comma-separated float values for MagCache ratios. Leave empty for default."}),
+            "magcache_retention_ratio": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
+            "magcache_threshold": ("FLOAT", {"default": 0.24, "min": 0.0, "max": 1.0, "step": 0.01}),
+            "magcache_k": ("INT", {"default": 6, "min": 1, "max": 100}),
+            "magcache_calibration": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache calibration mode."}),
+        }
+        types["required"].update(magcache_inputs)
+
+        # Add RoPE inputs to the experimental node
+        rope_inputs = {
+            "rope_scaling_factor": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.01, "tooltip": "RoPE scaling factor for H/W dimensions. Default is 1.0 (no scaling)."}),
+            "rope_scaling_timestep_threshold": ("INT", {"default": 1001, "min": 0, "max": 1001, "step": 1, "tooltip": "Timestep threshold to start applying RoPE scaling. 1001 to disable."}),
+        }
+        types["required"].update(rope_inputs)
+
+        # Add One-Frame Inference controls
+        one_frame_inputs = {
+            "advanced_one_frame_mode": ("BOOLEAN", {"default": False, "tooltip": "Enable advanced one-frame inference mode to override Kisekaeichi settings."}),
+            "one_frame_target_index": ("INT", {"default": 1, "min": 0, "max": 32, "step": 1, "tooltip": "Target index for generation."}),
+            "one_frame_control_index_1": ("INT", {"default": 0, "min": 0, "max": 32, "step": 1, "tooltip": "First control index (e.g., for start_latent)."}),
+            "one_frame_control_index_2": ("INT", {"default": 13, "min": 0, "max": 32, "step": 1, "tooltip": "Second control index (e.g., for reference_latent)."}),
+            "one_frame_no_2x": ("BOOLEAN", {"default": True, "tooltip": "Disable 2x clean latents."}),
+            "one_frame_no_4x": ("BOOLEAN", {"default": True, "tooltip": "Disable 4x clean latents."}),
+            "one_frame_no_post": ("BOOLEAN", {"default": True, "tooltip": "Disable post clean latents."}),
+        }
+        # Add to optional to not break existing workflows
+        types["optional"].update(one_frame_inputs)
+        
+        # Hide the string input, it's now constructed internally
+        if "one_frame_mode_str" in types["optional"]:
+            del types["optional"]["one_frame_mode_str"]
+
+        return types
+
+    RETURN_TYPES = ("LATENT", )
+    RETURN_NAMES = ("samples",)
+    FUNCTION = "process"
+    CATEGORY = "FramePackWrapper"
+    DESCRIPTION = "Single frame sampler with Kisekaeichi (style transfer) support and experimental features"
+
+    def process(self, model, shift, positive, negative, latent_window_size, use_teacache, teacache_rel_l1_thresh, steps, cfg,
+                guidance_scale, seed, sampler, gpu_memory_preservation, keep_model_in_vram,
+                enable_magcache, magcache_mag_ratios_str, magcache_retention_ratio, magcache_threshold, magcache_k, magcache_calibration,
+                rope_scaling_factor, rope_scaling_timestep_threshold,
+                start_latent=None, image_embeds=None, 
+                initial_samples=None, denoise_strength=1.0, use_kisekaeichi=False, reference_latent=None, 
+                reference_image_embeds=None, target_index=1, history_index=13, input_mask=None, reference_mask=None,
+                # New one-frame args
+                advanced_one_frame_mode=False, 
+                one_frame_target_index=1, one_frame_control_index_1=0, one_frame_control_index_2=13,
+                one_frame_no_2x=True, one_frame_no_4x=True, one_frame_no_post=True):
+        
+        original_sampler = FramePackSingleFrameSampler()
+        original_sampler.keep_model_in_vram = keep_model_in_vram
+
+        # Construct the one_frame_mode_str from the individual inputs
+        one_frame_mode_str = ""
+        if advanced_one_frame_mode:
+            commands = []
+            commands.append(f"target_index={one_frame_target_index}")
+            commands.append(f"control_indices={one_frame_control_index_1};{one_frame_control_index_2}")
+            if one_frame_no_2x:
+                commands.append("no_2x")
+            if one_frame_no_4x:
+                commands.append("no_4x")
+            if one_frame_no_post:
+                commands.append("no_post")
+            one_frame_mode_str = ", ".join(commands)
+
+        # Pass all arguments, including the constructed string, to the base sampler
+        result = original_sampler.process(
+            model, shift, positive, negative, latent_window_size, use_teacache, teacache_rel_l1_thresh, steps, cfg,
+            guidance_scale, seed, sampler, gpu_memory_preservation, start_latent, image_embeds, 
+            initial_samples, denoise_strength, use_kisekaeichi, reference_latent, 
+            reference_image_embeds, target_index, history_index, input_mask, reference_mask,
+            # Pass MagCache parameters
+            enable_magcache=enable_magcache, magcache_mag_ratios_str=magcache_mag_ratios_str, 
+            magcache_retention_ratio=magcache_retention_ratio, magcache_threshold=magcache_threshold, 
+            magcache_k=magcache_k, magcache_calibration=magcache_calibration,
+            # Pass RoPE parameters
+            rope_scaling_factor=rope_scaling_factor, rope_scaling_timestep_threshold=rope_scaling_timestep_threshold,
+            # Pass One-Frame parameters
+            advanced_one_frame_mode=advanced_one_frame_mode, one_frame_mode_str=one_frame_mode_str
+        )
+        
+        return result
+
+
 NODE_CLASS_MAPPINGS = {
     "DownloadAndLoadFramePackModel": DownloadAndLoadFramePackModel,
     "FramePackSampler": FramePackSampler,
-    "FramePackSingleFrameSampler": FramePackSingleFrameSampler,  # 新しい1フレーム用サンプラー
+    "FramePackSingleFrameSampler": FramePackSingleFrameSampler,
+    "FramePackSingleFrameSamplerExperimental": FramePackSingleFrameSamplerExperimental,
     "FramePackTorchCompileSettings": FramePackTorchCompileSettings,
     "FramePackFindNearestBucket": FramePackFindNearestBucket,
     "LoadFramePackModel": LoadFramePackModel,
@@ -1283,7 +1362,8 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DownloadAndLoadFramePackModel": "(Down)Load FramePackModel",
     "FramePackSampler": "FramePackSampler",
-    "FramePackSingleFrameSampler": "FramePack Single Frame Sampler",  # 新しいノード
+    "FramePackSingleFrameSampler": "FramePack Single Frame Sampler",
+    "FramePackSingleFrameSamplerExperimental": "FramePack Single Frame Sampler (Experimental)",
     "FramePackTorchCompileSettings": "Torch Compile Settings",
     "FramePackFindNearestBucket": "Find Nearest Bucket",
     "LoadFramePackModel": "Load FramePackModel",
