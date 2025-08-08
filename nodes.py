@@ -8,8 +8,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from accelerate import init_empty_weights
-from accelerate.utils import set_module_tensor_to_device
+# from accelerate import init_empty_weights
+# from accelerate.utils import set_module_tensor_to_device
 
 import folder_paths
 import comfy.model_management as mm
@@ -24,7 +24,7 @@ script_directory = os.path.dirname(os.path.abspath(__file__))
 vae_scaling_factor = 0.476986
 
 from .diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModel
-from .diffusers_helper.memory import DynamicSwapInstaller, move_model_to_device_with_memory_preservation
+from .diffusers_helper.memory import move_model_to_device_with_memory_preservation
 from .diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
 from .diffusers_helper.utils import crop_or_pad_yield_mask
 from .diffusers_helper.bucket_tools import find_nearest_bucket
@@ -439,7 +439,7 @@ class DownloadAndLoadFramePackModel:
                 local_dir_use_symlinks=False,
             )
 
-        transformer = HunyuanVideoTransformer3DModel.from_pretrained(model_path, torch_dtype=base_dtype, attention_mode=attention_mode).cpu()
+        transformer = HunyuanVideoTransformer3DModel.from_pretrained(model_path, torch_dtype=base_dtype, attention_mode=attention_mode)
         params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
         if quantization == 'fp8_e4m3fn' or quantization == 'fp8_e4m3fn_fast':
             transformer = transformer.to(torch.float8_e4m3fn)
@@ -451,7 +451,8 @@ class DownloadAndLoadFramePackModel:
         else:
             transformer = transformer.to(base_dtype)
 
-        DynamicSwapInstaller.install_model(transformer, device=device)
+        # Move model directly to device
+        transformer = transformer.to(device)
 
         if compile_args is not None:
             if compile_args["compile_single_blocks"]:
@@ -546,10 +547,14 @@ class LoadFramePackModel:
         import json
         with open(model_config_path, "r") as f:
             config = json.load(f)
-        sd = load_torch_file(model_path, device=offload_device, safe_load=True)
+        
+        # Load state dict directly to the target device
+        sd = load_torch_file(model_path, device=transformer_load_device, safe_load=True)
         model_weight_dtype = sd['single_transformer_blocks.0.attn.to_k.weight'].dtype
-        with init_empty_weights():
-            transformer = HunyuanVideoTransformer3DModel(**config, attention_mode=attention_mode)
+        
+        # Create model on the target device directly with proper dtype
+        transformer = HunyuanVideoTransformer3DModel(**config, attention_mode=attention_mode)
+        
         params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
         if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_scaled":
             dtype = torch.float8_e4m3fn
@@ -557,17 +562,45 @@ class LoadFramePackModel:
             dtype = torch.float8_e5m2
         else:
             dtype = base_dtype
+        
+        # Store the original dtype for later use with LoRA
+        after_lora_dtype = dtype
         if lora is not None:
-            after_lora_dtype = dtype
+            # When LoRA is present, we need to use base_dtype initially
             dtype = base_dtype
-        print("Using accelerate to load and assign model weights to device...")
-        param_count = sum(1 for _ in transformer.named_parameters())
-        for name, param in tqdm(transformer.named_parameters(),
-                desc=f"Loading transformer parameters to {transformer_load_device}",
-                total=param_count,
-                leave=True):
-            dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
-            set_module_tensor_to_device(transformer, name, device=transformer_load_device, dtype=dtype_to_use, value=sd[name])
+            
+            # Convert dtype for state dict if needed when LoRA is present
+            # Only convert if dtypes actually differ to avoid unnecessary memory operations
+            if dtype != model_weight_dtype:
+                print(f"Converting model weights from {model_weight_dtype} to {dtype} for LoRA compatibility")
+                for key in sd.keys():
+                    if any(keyword in key for keyword in params_to_keep):
+                        sd[key] = sd[key].to(base_dtype)
+                    else:
+                        sd[key] = sd[key].to(dtype)
+        else:
+            # When no LoRA, only convert if model dtype differs from target dtype
+            # AND if quantization is disabled (otherwise we handle it later)
+            if quantization == "disabled" and dtype != model_weight_dtype:
+                print(f"Converting model weights from {model_weight_dtype} to {dtype}")
+                for key in sd.keys():
+                    if any(keyword in key for keyword in params_to_keep):
+                        sd[key] = sd[key].to(base_dtype)
+                    else:
+                        sd[key] = sd[key].to(dtype)
+        
+        # Load state dict all at once
+        print(f"Loading transformer state dict to {transformer_load_device}")
+        info = transformer.load_state_dict(sd, strict=True)
+        print(f"Loaded state dict: {info}")
+        
+        # Move model to device with proper dtype
+        if quantization != "disabled" and lora is None:
+            # For quantized models without LoRA, convert to target dtype directly
+            transformer = transformer.to(transformer_load_device).to(after_lora_dtype)
+        else:
+            # For non-quantized or LoRA models, just move to device
+            transformer = transformer.to(transformer_load_device)
 
         if lora is not None:
             adapter_list = []
@@ -634,18 +667,31 @@ class LoadFramePackModel:
                     transformer.fuse_lora(lora_scale=lora_scale)
                     transformer.delete_adapters(adapter_list)
 
+            # if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_e5m2":
+            #     params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+            #     for name, param in transformer.named_parameters():
+            #         # Make sure to not cast the LoRA weights to fp8.
+            #         if not any(keyword in name for keyword in params_to_keep) and not 'lora' in name:
+            #             param.data = param.data.to(after_lora_dtype)
+
+
             if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_e5m2":
                 params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
                 for name, param in transformer.named_parameters():
-                    # Make sure to not cast the LoRA weights to fp8.
+                    # Make sure to not cast the LORA weights to fp8.
                     if not any(keyword in name for keyword in params_to_keep) and not 'lora' in name:
                         param.data = param.data.to(after_lora_dtype)
+
+
+
 
         if quantization == "fp8_e4m3fn_fast":
             from .fp8_optimization import convert_fp8_linear
             convert_fp8_linear(transformer, base_dtype, params_to_keep=params_to_keep)
 
-        DynamicSwapInstaller.install_model(transformer, device=device)
+        # Move model to device if it's not already there
+        if transformer_load_device != device:
+            transformer = transformer.to(device)
 
         if compile_args is not None:
             if compile_args["compile_single_blocks"]:

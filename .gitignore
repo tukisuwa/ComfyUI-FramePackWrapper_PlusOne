@@ -1,3 +1,5 @@
+extra_model_paths.yaml
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

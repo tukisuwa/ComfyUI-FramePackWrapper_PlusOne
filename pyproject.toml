@@ -1,0 +1,14 @@
+[project]
+name = "ComfyUI-FramePackWrapper_PlusOne"
+description = "An improved wrapper for the FramePack project that allows the creation of videos of any length based on reference images and LoRAs with F1 and 1-frame inference."
+version = "0.0.2"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/xhiroga/ComfyUI-FramePackWrapper_PlusOne"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = "xhiroga"
+DisplayName = "ComfyUI-FramePackWrapper_PlusOne"
+Icon = ""

@@ -832,8 +832,33 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
 
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
+        # Generate rope frequencies for the full sequence
         rope_freqs = self.rope(frame_indices=latent_indices, height=H, width=W, device=hidden_states.device)
         rope_freqs = rope_freqs.flatten(2).transpose(1, 2)
+        
+        # Fix rope_freqs size to match packed hidden_states
+        if rope_freqs.shape[1] != hidden_states.shape[1]:
+            # Calculate the ratio for expansion
+            hidden_seq_len = hidden_states.shape[1]  # 23562
+            rope_seq_len = rope_freqs.shape[1]       # 11781
+            
+            if hidden_seq_len > rope_seq_len:
+                # Calculate how many times to repeat
+                repeat_factor = hidden_seq_len // rope_seq_len
+                remainder = hidden_seq_len % rope_seq_len
+                
+                print(f"Expanding rope_freqs: {rope_seq_len} -> {hidden_seq_len} (repeat_factor={repeat_factor}, remainder={remainder})")
+                
+                # Repeat rope_freqs to match hidden_states size
+                rope_freqs = rope_freqs.repeat(1, repeat_factor, 1)
+                if remainder > 0:
+                    rope_freqs = torch.cat([rope_freqs, rope_freqs[:, :remainder]], dim=1)
+                
+                print(f"Final rope_freqs shape: {rope_freqs.shape}")
+            elif hidden_seq_len < rope_seq_len:
+                # Trim rope_freqs to match hidden_states size
+                rope_freqs = rope_freqs[:, :hidden_seq_len, :]
+                print(f"Trimmed rope_freqs shape: {rope_freqs.shape}")
 
         if clean_latents is not None and clean_latent_indices is not None:
             clean_latents = clean_latents.to(hidden_states)
@@ -842,6 +867,20 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
 
             clean_latent_rope_freqs = self.rope(frame_indices=clean_latent_indices, height=H, width=W, device=clean_latents.device)
             clean_latent_rope_freqs = clean_latent_rope_freqs.flatten(2).transpose(1, 2)
+            
+            # Ensure clean_latent_rope_freqs matches clean_latents size
+            if clean_latent_rope_freqs.shape[1] != clean_latents.shape[1]:
+                clean_seq_len = clean_latents.shape[1]
+                clean_rope_seq_len = clean_latent_rope_freqs.shape[1]
+                
+                if clean_seq_len > clean_rope_seq_len:
+                    repeat_factor = clean_seq_len // clean_rope_seq_len
+                    remainder = clean_seq_len % clean_rope_seq_len
+                    clean_latent_rope_freqs = clean_latent_rope_freqs.repeat(1, repeat_factor, 1)
+                    if remainder > 0:
+                        clean_latent_rope_freqs = torch.cat([clean_latent_rope_freqs, clean_latent_rope_freqs[:, :remainder]], dim=1)
+                elif clean_seq_len < clean_rope_seq_len:
+                    clean_latent_rope_freqs = clean_latent_rope_freqs[:, :clean_seq_len, :]
 
             hidden_states = torch.cat([clean_latents, hidden_states], dim=1)
             rope_freqs = torch.cat([clean_latent_rope_freqs, rope_freqs], dim=1)
@@ -856,6 +895,20 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
             clean_latent_2x_rope_freqs = pad_for_3d_conv(clean_latent_2x_rope_freqs, (2, 2, 2))
             clean_latent_2x_rope_freqs = center_down_sample_3d(clean_latent_2x_rope_freqs, (2, 2, 2))
             clean_latent_2x_rope_freqs = clean_latent_2x_rope_freqs.flatten(2).transpose(1, 2)
+            
+            # Ensure clean_latent_2x_rope_freqs matches clean_latents_2x size
+            if clean_latent_2x_rope_freqs.shape[1] != clean_latents_2x.shape[1]:
+                clean_2x_seq_len = clean_latents_2x.shape[1]
+                clean_2x_rope_seq_len = clean_latent_2x_rope_freqs.shape[1]
+                
+                if clean_2x_seq_len > clean_2x_rope_seq_len:
+                    repeat_factor = clean_2x_seq_len // clean_2x_rope_seq_len
+                    remainder = clean_2x_seq_len % clean_2x_rope_seq_len
+                    clean_latent_2x_rope_freqs = clean_latent_2x_rope_freqs.repeat(1, repeat_factor, 1)
+                    if remainder > 0:
+                        clean_latent_2x_rope_freqs = torch.cat([clean_latent_2x_rope_freqs, clean_latent_2x_rope_freqs[:, :remainder]], dim=1)
+                elif clean_2x_seq_len < clean_2x_rope_seq_len:
+                    clean_latent_2x_rope_freqs = clean_latent_2x_rope_freqs[:, :clean_2x_seq_len, :]
 
             hidden_states = torch.cat([clean_latents_2x, hidden_states], dim=1)
             rope_freqs = torch.cat([clean_latent_2x_rope_freqs, rope_freqs], dim=1)
@@ -870,6 +923,20 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
             clean_latent_4x_rope_freqs = pad_for_3d_conv(clean_latent_4x_rope_freqs, (4, 4, 4))
             clean_latent_4x_rope_freqs = center_down_sample_3d(clean_latent_4x_rope_freqs, (4, 4, 4))
             clean_latent_4x_rope_freqs = clean_latent_4x_rope_freqs.flatten(2).transpose(1, 2)
+            
+            # Ensure clean_latent_4x_rope_freqs matches clean_latents_4x size
+            if clean_latent_4x_rope_freqs.shape[1] != clean_latents_4x.shape[1]:
+                clean_4x_seq_len = clean_latents_4x.shape[1]
+                clean_4x_rope_seq_len = clean_latent_4x_rope_freqs.shape[1]
+                
+                if clean_4x_seq_len > clean_4x_rope_seq_len:
+                    repeat_factor = clean_4x_seq_len // clean_4x_rope_seq_len
+                    remainder = clean_4x_seq_len % clean_4x_rope_seq_len
+                    clean_latent_4x_rope_freqs = clean_latent_4x_rope_freqs.repeat(1, repeat_factor, 1)
+                    if remainder > 0:
+                        clean_latent_4x_rope_freqs = torch.cat([clean_latent_4x_rope_freqs, clean_latent_4x_rope_freqs[:, :remainder]], dim=1)
+                elif clean_4x_seq_len < clean_4x_rope_seq_len:
+                    clean_latent_4x_rope_freqs = clean_latent_4x_rope_freqs[:, :clean_4x_seq_len, :]
 
             hidden_states = torch.cat([clean_latents_4x, hidden_states], dim=1)
             rope_freqs = torch.cat([clean_latent_4x_rope_freqs, rope_freqs], dim=1)
