@@ -94,3 +94,9 @@ $(models):
 	mv $(TMP)/$(REPO)/$(FILE) $@
 
 init: ComfyUI/.venv $(custom_nodes) $(models)
+
+patch-tori29umai0123:
+	git remote | grep upstream || git remote add upstream https://github.com/tori29umai0123/ComfyUI-FramePackWrapper_PlusOne.git
+	git fetch upstream
+	git checkout upstream/main -- .
+	@echo "tori29umai0123/ComfyUI-FramePackWrapper_PlusOne をパッチしました。Staged Changesを確認してコミットしてください。ファイルに差異がある場合、削除を含めて全て先方が優先されます。"

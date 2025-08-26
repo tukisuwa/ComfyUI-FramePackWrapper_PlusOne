@@ -61,9 +61,23 @@ See [example_workflows](./example_workflows).
 
 ## Changelog
 
-### v2.0.0 - Full musubi-tuner Compatibility (2025-01-XX)
+### v2.0.1 - Bug Fixes (2025-08-26)
+
+#### New Features
+- **Kisekaeichi Multi-Reference Support**: Kisekaeichi mode now supports multiple reference images as input, allowing for more complex and varied character style transfers.
+
+#### Bug Fixes
+- **Fixed generation failure on second and subsequent runs**: Resolved a dtype mismatch error (BFloat16 vs Float32) that caused failures when running generation multiple times in succession.
+
+### v2.0.0 - Full musubi-tuner Compatibility (2025-08-08)
 
 Achieved **complete compatibility with musubi-tuner specifications** to improve inference result consistency when using multiple reference images.
+
+#### Breaking Changes
+
+1. **The `denoise_strength` of workflows created up to v0.0.2 may be reset to 0.** After updating the node, please manually reset it to 1.0.
+
+2. **Existing kisekaeichi workflows cannot be reused with this update.** The reference image input has been changed to a list format to support multiple reference images. Please refer to `Oneframe_kisekae_V2.json` in the example_workflows folder for the updated workflow structure.
 
 #### Major Changes
 

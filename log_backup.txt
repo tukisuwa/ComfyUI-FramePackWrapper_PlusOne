@@ -1,0 +1,64 @@
+!!! Exception during processing !!! Input type (struct c10::BFloat16) and bias type (float) should be the same
+Traceback (most recent call last):
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\execution.py", line 496, in execute
+output_data, output_ui, has_subgraph, has_pending_tasks = await get_output_data(prompt_id, unique_id, obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, hidden_inputs=hidden_inputs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\execution.py", line 315, in get_output_data
+return_values = await _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, obj.FUNCTION, allow_interrupt=True, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb, hidden_inputs=hidden_inputs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\execution.py", line 289, in _async_map_node_over_list
+await process_inputs(input_dict, i)
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\execution.py", line 277, in process_inputs
+result = f(**inputs)
+^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\nodes_one.py", line 538, in process
+generated_latents = sample_hunyuan(
+^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\utils_contextlib.py", line 116, in decorate_context
+return func(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\pipelines\k_diffusion_hunyuan.py", line 119, in sample_hunyuan
+results = sample_unipc(k_model, latents, sigmas, extra_args=sampler_kwargs, disable=False, variant=variant, callback=callback)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\k_diffusion\uni_pc_fm.py", line 149, in sample_unipc
+return FlowMatchUniPC(model, extra_args=extra_args, variant=variant).sample(noise, sigmas=sigmas, callback=callback, disable_pbar=disable)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\k_diffusion\uni_pc_fm.py", line 119, in sample
+model_prev_list = [self.model_fn(x, vec_t)]
+^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\k_diffusion\uni_pc_fm.py", line 23, in model_fn
+return self.model(x, t, **self.extra_args)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\k_diffusion\wrapper.py", line 37, in k_model
+pred_positive = transformer(hidden_states=hidden_states, timestep=timestep, return_dict=False, **extra_args['positive'])[0].float()
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\module.py", line 1739, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\module.py", line 1750, in _call_impl
+return forward_call(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\models\hunyuan_video_packed.py", line 967, in forward
+hidden_states, rope_freqs = self.process_input_hidden_states(hidden_states, latent_indices, clean_latents, clean_latent_indices, clean_latents_2x, clean_latent_2x_indices, clean_latents_4x, clean_latent_4x_indices)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\models\hunyuan_video_packed.py", line 865, in process_input_hidden_states
+clean_latents = self.gradient_checkpointing_method(self.clean_x_embedder.proj, clean_latents)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\ComfyUI\custom_nodes\ComfyUI-FramePackWrapper_PlusOne\diffusers_helper\models\hunyuan_video_packed.py", line 817, in gradient_checkpointing_method
+result = block(*args)
+^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\module.py", line 1739, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\module.py", line 1750, in _call_impl
+return forward_call(*args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\conv.py", line 725, in forward
+return self._conv_forward(input, self.weight, self.bias)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "D:\ComfyUI_windows_portable_20250319\python_embeded\Lib\site-packages\torch\nn\modules\conv.py", line 720, in _conv_forward
+return F.conv3d(
+^^^^^^^^^
+RuntimeError: Input type (struct c10::BFloat16) and bias type (float) should be the same
+
+Prompt executed in 8.94 seconds`

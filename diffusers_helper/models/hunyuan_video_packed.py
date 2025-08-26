@@ -811,6 +811,12 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
         self.teacache_rescale_func = np.poly1d([7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02])
 
     def gradient_checkpointing_method(self, block, *args):
+        # Ensure block parameters match input dtype if needed
+        if args and hasattr(args[0], 'dtype'):
+            input_dtype = args[0].dtype
+            if hasattr(block, 'weight') and block.weight.dtype != input_dtype:
+                block = block.to(dtype=input_dtype)
+        
         if self.use_gradient_checkpointing:
             result = torch.utils.checkpoint.checkpoint(block, *args, use_reentrant=False)
         else:
@@ -861,7 +867,7 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 print(f"Trimmed rope_freqs shape: {rope_freqs.shape}")
 
         if clean_latents is not None and clean_latent_indices is not None:
-            clean_latents = clean_latents.to(hidden_states)
+            clean_latents = clean_latents.to(device=hidden_states.device, dtype=hidden_states.dtype)
             clean_latents = self.gradient_checkpointing_method(self.clean_x_embedder.proj, clean_latents)
             clean_latents = clean_latents.flatten(2).transpose(1, 2)
 
@@ -886,7 +892,7 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
             rope_freqs = torch.cat([clean_latent_rope_freqs, rope_freqs], dim=1)
 
         if clean_latents_2x is not None and clean_latent_2x_indices is not None:
-            clean_latents_2x = clean_latents_2x.to(hidden_states)
+            clean_latents_2x = clean_latents_2x.to(device=hidden_states.device, dtype=hidden_states.dtype)
             clean_latents_2x = pad_for_3d_conv(clean_latents_2x, (2, 4, 4))
             clean_latents_2x = self.gradient_checkpointing_method(self.clean_x_embedder.proj_2x, clean_latents_2x)
             clean_latents_2x = clean_latents_2x.flatten(2).transpose(1, 2)
@@ -914,7 +920,7 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
             rope_freqs = torch.cat([clean_latent_2x_rope_freqs, rope_freqs], dim=1)
 
         if clean_latents_4x is not None and clean_latent_4x_indices is not None:
-            clean_latents_4x = clean_latents_4x.to(hidden_states)
+            clean_latents_4x = clean_latents_4x.to(device=hidden_states.device, dtype=hidden_states.dtype)
             clean_latents_4x = pad_for_3d_conv(clean_latents_4x, (4, 8, 8))
             clean_latents_4x = self.gradient_checkpointing_method(self.clean_x_embedder.proj_4x, clean_latents_4x)
             clean_latents_4x = clean_latents_4x.flatten(2).transpose(1, 2)
