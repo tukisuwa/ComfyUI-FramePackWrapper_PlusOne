@@ -63,9 +63,6 @@ See [example_workflows](./example_workflows).
 
 ### v2.0.1 - Bug Fixes (2025-08-26)
 
-#### New Features
-- **Kisekaeichi Multi-Reference Support**: Kisekaeichi mode now supports multiple reference images as input, allowing for more complex and varied character style transfers.
-
 #### Bug Fixes
 - **Fixed generation failure on second and subsequent runs**: Resolved a dtype mismatch error (BFloat16 vs Float32) that caused failures when running generation multiple times in succession.
 
