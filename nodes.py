@@ -8,8 +8,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# from accelerate import init_empty_weights
-# from accelerate.utils import set_module_tensor_to_device
+from accelerate import init_empty_weights
+from accelerate.utils import set_module_tensor_to_device
 
 import folder_paths
 import comfy.model_management as mm
@@ -19,12 +19,13 @@ import comfy.latent_formats
 from comfy.cli_args import args, LatentPreviewMethod
 
 from .utils import log
+from . import lora_loader
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 vae_scaling_factor = 0.476986
 
 from .diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModel
-from .diffusers_helper.memory import move_model_to_device_with_memory_preservation
+from .diffusers_helper.memory import DynamicSwapInstaller, move_model_to_device_with_memory_preservation
 from .diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
 from .diffusers_helper.utils import crop_or_pad_yield_mask
 from .diffusers_helper.bucket_tools import find_nearest_bucket
@@ -468,6 +469,7 @@ class DownloadAndLoadFramePackModel:
             "transformer": transformer.eval(),
             "dtype": base_dtype,
         }
+        DynamicSwapInstaller.install_model(transformer, device=device)
         return (pipe, )
 
 class FramePackLoraSelect:
@@ -515,7 +517,9 @@ class LoadFramePackModel:
 
             "base_precision": (["fp32", "bf16", "fp16"], {"default": "bf16"}),
             "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2'], {"default": 'disabled', "tooltip": "optional quantization method"}),
-            "load_device": (["main_device", "offload_device"], {"default": "cuda", "tooltip": "Initialize the model on the main device or offload device"}),
+            "load_device": (["main_device", "offload_device"], {"default": "main_device", "tooltip": "Initialize the model on the main device or offload device"}),
+            "gpu_memory_preservation": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 128.0, "step": 0.1, "tooltip": "The amount of GPU memory to preserve."}),
+            "lora_vram_strategy": (["KeepUntilFull", "Rotate"], {"default": "KeepUntilFull", "tooltip": "Strategy for handling VRAM when merging LoRAs."}),
             },
             "optional": {
                 "attention_mode": ([
@@ -534,164 +538,63 @@ class LoadFramePackModel:
     CATEGORY = "FramePackWrapper"
 
     def loadmodel(self, model, base_precision, quantization,
-                  compile_args=None, attention_mode="sdpa", lora=None, load_device="main_device"):
+                  compile_args=None, attention_mode="sdpa", lora=None, load_device="main_device", gpu_memory_preservation=6.0, lora_vram_strategy="KeepUntilFull"):
         base_dtype = {"fp8_e4m3fn": torch.float8_e4m3fn, "fp8_e4m3fn_fast": torch.float8_e4m3fn, "bf16": torch.bfloat16, "fp16": torch.float16, "fp16_fast": torch.float16, "fp32": torch.float32}[base_precision]
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
-        if load_device == "main_device":
-            transformer_load_device = device
-        else:
-            transformer_load_device = offload_device
+        
         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model)
         model_config_path = os.path.join(script_directory, "transformer_config.json")
         import json
         with open(model_config_path, "r") as f:
             config = json.load(f)
-        
-        # Load state dict directly to the target device
-        sd = load_torch_file(model_path, device=transformer_load_device, safe_load=True)
-        model_weight_dtype = sd['single_transformer_blocks.0.attn.to_k.weight'].dtype
-        
-        # Create model on the target device directly with proper dtype
-        transformer = HunyuanVideoTransformer3DModel(**config, attention_mode=attention_mode)
-        
+
+        # VRAM clean up
+        mm.unload_all_models()
+        mm.cleanup_models()
+        mm.soft_empty_cache()
+
+        # Step 1: Load state_dict on CPU, merging LoRA if present
+        if lora is not None:
+            print("Merging LoRA...")
+            sd = lora_loader.merge_lora_to_state_dict(model_path, lora, device, gpu_memory_preservation, lora_vram_strategy)
+        else:
+            print("Loading model weights...")
+            sd = load_torch_file(model_path, device=device, safe_load=True)
+
+        # Step 2: Create model with empty weights
+        with init_empty_weights():
+            transformer = HunyuanVideoTransformer3DModel(**config, attention_mode=attention_mode)
+
+        # Step 3: Determine target dtypes
         params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
-        if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_scaled":
+        if quantization in ["fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_scaled"]:
             dtype = torch.float8_e4m3fn
         elif quantization == "fp8_e5m2":
             dtype = torch.float8_e5m2
         else:
             dtype = base_dtype
+
+        # Step 4: Load weights into the model, respecting the device of each tensor in the state_dict
+        print(f"Loading and assigning model weights...")
         
-        # Store the original dtype for later use with LoRA
-        after_lora_dtype = dtype
-        if lora is not None:
-            # When LoRA is present, we need to use base_dtype initially
-            dtype = base_dtype
-            
-            # Convert dtype for state dict if needed when LoRA is present
-            # Only convert if dtypes actually differ to avoid unnecessary memory operations
-            if dtype != model_weight_dtype:
-                print(f"Converting model weights from {model_weight_dtype} to {dtype} for LoRA compatibility")
-                for key in sd.keys():
-                    if any(keyword in key for keyword in params_to_keep):
-                        sd[key] = sd[key].to(base_dtype)
-                    else:
-                        sd[key] = sd[key].to(dtype)
-        else:
-            # When no LoRA, only convert if model dtype differs from target dtype
-            # AND if quantization is disabled (otherwise we handle it later)
-            if quantization == "disabled" and dtype != model_weight_dtype:
-                print(f"Converting model weights from {model_weight_dtype} to {dtype}")
-                for key in sd.keys():
-                    if any(keyword in key for keyword in params_to_keep):
-                        sd[key] = sd[key].to(base_dtype)
-                    else:
-                        sd[key] = sd[key].to(dtype)
+        param_count = sum(1 for _ in transformer.named_parameters())
+        for name, param in tqdm(transformer.named_parameters(),
+                desc=f"Loading transformer parameters",
+                total=param_count,
+                leave=True):
+            dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
+            tensor_value = sd[name]
+            set_module_tensor_to_device(transformer, name, device=tensor_value.device, dtype=dtype_to_use, value=tensor_value)
         
-        # Load state dict all at once
-        print(f"Loading transformer state dict to {transformer_load_device}")
-        info = transformer.load_state_dict(sd, strict=True)
-        print(f"Loaded state dict: {info}")
-        
-        # Move model to device with proper dtype
-        if quantization != "disabled" and lora is None:
-            # For quantized models without LoRA, convert to target dtype directly
-            transformer = transformer.to(transformer_load_device).to(after_lora_dtype)
-        else:
-            # For non-quantized or LoRA models, just move to device
-            transformer = transformer.to(transformer_load_device)
-
-        if lora is not None:
-            adapter_list = []
-            adapter_weights = []
-
-            for l in lora:
-                fuse = True if l["fuse_lora"] else False
-                lora_sd = load_torch_file(l["path"])
-
-                if "lora_unet_single_transformer_blocks_0_attn_to_k.lora_up.weight" in lora_sd:
-                    from .utils import convert_to_diffusers
-                    lora_sd = convert_to_diffusers("lora_unet_", lora_sd)
-
-                if not "transformer.single_transformer_blocks.0.attn.to_k.lora_A.weight" in lora_sd:
-                    log.info(f"Converting LoRA weights from {l['path']} to diffusers format...")
-                    # Make a copy of the original state dict to avoid modifying it
-                    state_dict_copy = {}
-                    
-                    # Remove scalar (0-dimensional) tensors that cause problems
-                    for key, value in lora_sd.items():
-                        if isinstance(value, torch.Tensor):
-                            if value.dim() == 0:
-                                print(f"Skipping 0-dimensional tensor: {key}")
-                                continue
-                            state_dict_copy[key] = value
-                        else:
-                            print(f"Skipping non-tensor value: {key}")
-                    
-                    print(f"After filtering: {len(state_dict_copy)} valid keys")
-                    
-                    # Try the original conversion with the filtered state dict
-                    try:
-                        from diffusers.loaders.lora_conversion_utils import _convert_hunyuan_video_lora_to_diffusers
-                        lora_sd = _convert_hunyuan_video_lora_to_diffusers(state_dict_copy)
-                        print("Successfully converted LoRA weights")
-                    except Exception as e:
-                        print(f"Error in standard conversion: {e}")
-                        # Fall back to empty dict if conversion fails
-                        print("Conversion failed, returning empty state dict")
-                        lora_sd = {}
-
-                lora_rank = None
-                for key, val in lora_sd.items():
-                    if "lora_B" in key or "lora_up" in key:
-                        lora_rank = val.shape[1]
-                        break
-                if lora_rank is not None:
-                    log.info(f"Merging rank {lora_rank} LoRA weights from {l['path']} with strength {l['strength']}")
-                    adapter_name = l['path'].split("/")[-1].split(".")[0]
-                    adapter_weight = l['strength']
-                    transformer.load_lora_adapter(lora_sd, weight_name=l['path'].split("/")[-1], lora_rank=lora_rank, adapter_name=adapter_name)
-
-                    adapter_list.append(adapter_name)
-                    adapter_weights.append(adapter_weight)
-
-                del lora_sd
-                mm.soft_empty_cache()
-            if adapter_list:
-                transformer.set_adapters(adapter_list, weights=adapter_weights)
-                if fuse:
-                    if model_weight_dtype not in [torch.float32, torch.float16, torch.bfloat16]:
-                        raise ValueError("Fusing LoRA doesn't work well with fp8 model weights. Please use a bf16 model file, or disable LoRA fusing.")
-                    lora_scale = 1
-                    transformer.fuse_lora(lora_scale=lora_scale)
-                    transformer.delete_adapters(adapter_list)
-
-            # if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_e5m2":
-            #     params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
-            #     for name, param in transformer.named_parameters():
-            #         # Make sure to not cast the LoRA weights to fp8.
-            #         if not any(keyword in name for keyword in params_to_keep) and not 'lora' in name:
-            #             param.data = param.data.to(after_lora_dtype)
-
-
-            if quantization == "fp8_e4m3fn" or quantization == "fp8_e4m3fn_fast" or quantization == "fp8_e5m2":
-                params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
-                for name, param in transformer.named_parameters():
-                    # Make sure to not cast the LORA weights to fp8.
-                    if not any(keyword in name for keyword in params_to_keep) and not 'lora' in name:
-                        param.data = param.data.to(after_lora_dtype)
-
-
-
+        del sd
+        mm.soft_empty_cache()
 
         if quantization == "fp8_e4m3fn_fast":
             from .fp8_optimization import convert_fp8_linear
             convert_fp8_linear(transformer, base_dtype, params_to_keep=params_to_keep)
 
-        # Move model to device if it's not already there
-        if transformer_load_device != device:
-            transformer = transformer.to(device)
+        DynamicSwapInstaller.install_model(transformer, device=device)
 
         if compile_args is not None:
             if compile_args["compile_single_blocks"]:
@@ -754,6 +657,13 @@ class FramePackSampler:
                     {
                         "default": 'unipc_bh1'
                     }),
+                # MagCache Inputs
+                "enable_magcache": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache for faster inference."}),
+                "magcache_mag_ratios_str": ("STRING", {"default": "", "multiline": False, "tooltip": "Comma-separated float values for MagCache ratios (e.g., 1.0,1.06971,...). Leave empty for default ratios or calibration."}),
+                "magcache_retention_ratio": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "MagCache retention ratio."}),
+                "magcache_threshold": ("FLOAT", {"default": 0.24, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "MagCache threshold."}),
+                "magcache_k": ("INT", {"default": 6, "min": 1, "max": 100, "step": 1, "tooltip": "MagCache k value (max consecutive skips)."}),
+                "magcache_calibration": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache calibration mode. Prints suggested mag_ratios."}),
             },
             "optional": {
                 "image_embeds": ("CLIP_VISION_OUTPUT", ),
@@ -772,13 +682,46 @@ class FramePackSampler:
     CATEGORY = "FramePackWrapper"
 
     def process(self, model, shift, positive, negative, latent_window_size, use_teacache, total_second_length, teacache_rel_l1_thresh, steps, cfg,
-                guidance_scale, seed, sampler, gpu_memory_preservation, start_latent=None, image_embeds=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
+                guidance_scale, seed, sampler, gpu_memory_preservation,
+                enable_magcache, magcache_mag_ratios_str, magcache_retention_ratio, magcache_threshold, magcache_k, magcache_calibration,
+                start_latent=None, image_embeds=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
         total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
         total_latent_sections = int(max(round(total_latent_sections), 1))
         print("total_latent_sections: ", total_latent_sections)
 
         transformer = model["transformer"]
         base_dtype = model["dtype"]
+
+        # Reset cache flags before setting new values
+        if hasattr(transformer, 'enable_teacache'):
+            transformer.enable_teacache = False
+        if hasattr(transformer, 'enable_magcache'):
+            transformer.enable_magcache = False
+
+        # MagCache: Initialize
+        if enable_magcache:
+            mag_ratios = None
+            if magcache_mag_ratios_str and not magcache_calibration:
+                try:
+                    # Parse comma-separated string to list of floats
+                    mag_ratios = [float(x.strip()) for x in magcache_mag_ratios_str.split(',') if x.strip()]
+                except ValueError:
+                    print(f"Warning: Could not parse magcache_mag_ratios_str: {magcache_mag_ratios_str}. Using default ratios.")
+                    mag_ratios = None # Fallback to default if parsing fails
+
+            print(f"Initializing MagCache with enable={enable_magcache}, retention_ratio={magcache_retention_ratio}, threshold={magcache_threshold}, K={magcache_k}, calibration={magcache_calibration}")
+            if hasattr(transformer, 'initialize_magcache'):
+                transformer.initialize_magcache(
+                    enable=enable_magcache,
+                    retention_ratio=magcache_retention_ratio,
+                    mag_ratios=mag_ratios,
+                    magcache_thresh=magcache_threshold,
+                    K=magcache_k,
+                    calibration=magcache_calibration,
+                )
+            else:
+                print("Warning: Transformer model does not have 'initialize_magcache' method. MagCache will not be used.")
+                enable_magcache = False
 
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
@@ -846,6 +789,10 @@ class FramePackSampler:
 
         move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
 
+        transformer.to(offload_device)
+        mm.soft_empty_cache()
+        move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
+
         if total_latent_sections > 4:
             # In theory the latent_paddings should follow the above sequence, but it seems that duplicating some
             # items looks better than expanding it when total_latent_sections > 4
@@ -855,6 +802,10 @@ class FramePackSampler:
             latent_paddings_list = latent_paddings.copy()
 
         for i, latent_padding in enumerate(latent_paddings):
+            # MagCache: Reset for each section/sampling loop iteration
+            if enable_magcache and hasattr(transformer, 'reset_magcache'):
+                transformer.reset_magcache(steps)
+
             print(f"latent_padding: {latent_padding}")
             is_last_section = latent_padding == 0
             is_first_section = latent_padding == latent_paddings[0]
@@ -918,7 +869,11 @@ class FramePackSampler:
 
 
             if use_teacache:
-                transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
+                if enable_magcache:
+                    print("Warning: TEACache and MagCache are both enabled. Disabling TEACache.")
+                    transformer.initialize_teacache(enable_teacache=False)
+                else:
+                    transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
             else:
                 transformer.initialize_teacache(enable_teacache=False)
 
@@ -966,6 +921,24 @@ class FramePackSampler:
 
             if is_last_section:
                 break
+
+        # MagCache: Postprocess and Calibration Data Output
+        if enable_magcache and magcache_calibration:
+            try:
+                if hasattr(transformer, 'get_calibration_data'):
+                    norm_ratio, norm_std, cos_dis = transformer.get_calibration_data()
+                    print("\nMagCache Calibration Data:")
+                    print(f"  - norm_ratio: {norm_ratio}")
+                    print(f"  - norm_std: {norm_std}")
+                    print(f"  - cos_dis: {cos_dis}")
+                    print("\nSuggested --magcache_mag_ratios (copy and paste):")
+                    # Add 1.0 at the beginning as in the original script's default
+                    suggested_ratios = [1.0] + norm_ratio
+                    print(",".join([f"{ratio:.5f}" for ratio in suggested_ratios]))
+                else:
+                    print("Warning: Transformer model does not have 'get_calibration_data' method.")
+            except Exception as e:
+                print(f"Error getting MagCache calibration data: {e}")
 
         transformer.to(offload_device)
         mm.soft_empty_cache()

@@ -1,6 +1,3 @@
-# By lllyasviel
-
-
 import torch
 
 

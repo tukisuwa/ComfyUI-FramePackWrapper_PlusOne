@@ -186,6 +186,14 @@ class FramePackSampler_F1:
                 "start_embed_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Weighted average constant for image embed interpolation. If end image is not set, the embed's strength won't be affected"}),
                 "initial_samples": ("LATENT", {"tooltip": "init Latents to use for video2video"} ),
                 "denoise_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "enable_magcache": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache for faster inference."}),
+                "magcache_mag_ratios_str": ("STRING", {"default": "", "multiline": False, "tooltip": "Comma-separated float values for MagCache ratios (e.g., 1.0,1.06971,...). Leave empty for default ratios or calibration."}),
+                "magcache_retention_ratio": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "MagCache retention ratio."}),
+                "magcache_threshold": ("FLOAT", {"default": 0.24, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "MagCache threshold."}),
+                "magcache_k": ("INT", {"default": 6, "min": 1, "max": 100, "step": 1, "tooltip": "MagCache k value (max consecutive skips)."}),
+                "magcache_calibration": ("BOOLEAN", {"default": False, "tooltip": "Enable MagCache calibration mode. Prints suggested mag_ratios."}),
+                "rope_scaling_factor": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.01, "tooltip": "RoPE scaling factor for H/W dimensions. Default is 1.0 (no scaling)."}),
+                "rope_scaling_timestep_threshold": ("INT", {"default": 1001, "min": 0, "max": 1001, "step": 1, "tooltip": "Timestep threshold to start applying RoPE scaling. 1001 to disable."}),
             }
         }
 
@@ -195,7 +203,10 @@ class FramePackSampler_F1:
     CATEGORY = "FramePackWrapper"
 
     def process(self, model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, steps, cfg,
-                guidance_scale, shift, seed, sampler, gpu_memory_preservation, start_image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
+                guidance_scale, shift, seed, sampler, gpu_memory_preservation, start_image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0,
+                enable_magcache=False, magcache_mag_ratios_str="", magcache_retention_ratio=0.2,
+                magcache_threshold=0.24, magcache_k=6, magcache_calibration=False,
+                rope_scaling_factor=1.0, rope_scaling_timestep_threshold=1001):
 
         # --- Extract data from positive_timed_data --- 
         positive_timed_list = positive_timed_data["sections"]
@@ -223,6 +234,42 @@ class FramePackSampler_F1:
         transformer = model["transformer"]
         base_dtype = model["dtype"]
 
+        # Reset cache flags before setting new values
+        if hasattr(transformer, 'enable_teacache'):
+            transformer.enable_teacache = False
+        if hasattr(transformer, 'enable_magcache'):
+            transformer.enable_magcache = False
+
+        # RoPE Scaling: Set parameters on the model
+        if hasattr(transformer, 'rope_scaling_factor'):
+            transformer.rope_scaling_factor = rope_scaling_factor
+        if hasattr(transformer, 'rope_scaling_timestep_threshold'):
+            transformer.rope_scaling_timestep_threshold = rope_scaling_timestep_threshold if rope_scaling_timestep_threshold <= 1000 else None
+
+        # MagCache: Initialize
+        if enable_magcache:
+            mag_ratios = None
+            if magcache_mag_ratios_str and not magcache_calibration:
+                try:
+                    mag_ratios = [float(x.strip()) for x in magcache_mag_ratios_str.split(',') if x.strip()]
+                except ValueError:
+                    print(f"Warning: Could not parse magcache_mag_ratios_str: {magcache_mag_ratios_str}. Using default ratios.")
+                    mag_ratios = None
+
+            print(f"Initializing MagCache with enable={enable_magcache}, retention_ratio={magcache_retention_ratio}, threshold={magcache_threshold}, K={magcache_k}, calibration={magcache_calibration}")
+            if hasattr(transformer, 'initialize_magcache'):
+                transformer.initialize_magcache(
+                    enable=enable_magcache,
+                    retention_ratio=magcache_retention_ratio,
+                    mag_ratios=mag_ratios,
+                    magcache_thresh=magcache_threshold,
+                    K=magcache_k,
+                    calibration=magcache_calibration,
+                )
+            else:
+                print("Warning: Transformer model does not have 'initialize_magcache' method. MagCache will not be used.")
+                enable_magcache = False
+
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
 
@@ -231,14 +278,14 @@ class FramePackSampler_F1:
         mm.soft_empty_cache()
 
         if start_latent is None:
-            # Handle case where start_latent is not provided (e.g., create default black latent)
-             # Get model's expected channel count (often 16 for FramePack)
-             latent_channels = getattr(transformer.config, 'in_channels', 16)
-             # Determine a default spatial size if not derivable (e.g., 64x64 or based on bucket?)
-             # Using a common default like 64x64 / 8 = 8x8 latent space, but this might need adjustment
-             H = W = 64 # Default spatial size assumption
-             print(f"Warning: start_latent not provided. Creating default black latent ({latent_channels}x1x{H}x{W}).")
-             start_latent_tensor = torch.zeros([1, latent_channels, 1, H, W], dtype=torch.float32)
+             # Handle case where start_latent is not provided (e.g., create default black latent)
+              # Get model's expected channel count (often 16 for FramePack)
+              latent_channels = getattr(transformer.config, 'in_channels', 16)
+              # Determine a default spatial size if not derivable (e.g., 64x64 or based on bucket?)
+              # Using a common default like 64x64 / 8 = 8x8 latent space, but this might need adjustment
+              H = W = 64 # Default spatial size assumption
+              print(f"Warning: start_latent not provided. Creating default black latent ({latent_channels}x1x{H}x{W}).")
+              start_latent_tensor = torch.zeros([1, latent_channels, 1, H, W], dtype=torch.float32)
         else:
             start_latent_tensor = start_latent["samples"] # Get tensor from dictionary
 
@@ -324,6 +371,10 @@ class FramePackSampler_F1:
         move_model_to_device_with_memory_preservation(transformer, target_device=device, preserved_memory_gb=gpu_memory_preservation)
 
         for i, latent_padding in enumerate(latent_paddings):
+            # MagCache: Reset for each section/sampling loop iteration
+            if enable_magcache and hasattr(transformer, 'reset_magcache'):
+                transformer.reset_magcache(steps)
+
             print(f"Sampling Section {i+1}/{total_latent_sections}, latent_padding: {latent_padding}")
             is_last_section = latent_padding == 0
 
@@ -475,7 +526,11 @@ class FramePackSampler_F1:
                      print("vid2vid - Warning: Calculated slice is empty.")
 
             if use_teacache:
-                transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
+                if enable_magcache:
+                    print("Warning: TEACache and MagCache are both enabled. Disabling TEACache.")
+                    transformer.initialize_teacache(enable_teacache=False)
+                else:
+                    transformer.initialize_teacache(enable_teacache=True, num_steps=steps, rel_l1_thresh=teacache_rel_l1_thresh)
             else:
                 transformer.initialize_teacache(enable_teacache=False)
 
@@ -523,6 +578,23 @@ class FramePackSampler_F1:
 
             if is_last_section:
                 break
+
+        # MagCache: Postprocess and Calibration Data Output
+        if enable_magcache and magcache_calibration:
+            try:
+                if hasattr(transformer, 'get_calibration_data'):
+                    norm_ratio, norm_std, cos_dis = transformer.get_calibration_data()
+                    print("\nMagCache Calibration Data:")
+                    print(f"  - norm_ratio: {norm_ratio}")
+                    print(f"  - norm_std: {norm_std}")
+                    print(f"  - cos_dis: {cos_dis}")
+                    print("\nSuggested --magcache_mag_ratios (copy and paste):")
+                    suggested_ratios = [1.0] + norm_ratio
+                    print(",".join([f"{ratio:.5f}" for ratio in suggested_ratios]))
+                else:
+                    print("Warning: Transformer model does not have 'get_calibration_data' method.")
+            except Exception as e:
+                print(f"Error getting MagCache calibration data: {e}")
 
         transformer.to(offload_device)
         mm.soft_empty_cache()
